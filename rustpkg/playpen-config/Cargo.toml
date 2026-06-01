@@ -1,0 +1,19 @@
+[package]
+name = "playpen-config"
+version = "0.1.0"
+edition = "2024"
+description = "配置聚合层：AppConfig 合并 + Provider/Sandbox/Profile 接线"
+
+[dependencies]
+playpen-sandbox = { workspace = true  }
+merge = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+toml = "1"
+anyhow = "1"
+regex = "1"
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+pretty_assertions = "1"

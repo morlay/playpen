@@ -1,0 +1,19 @@
+[package]
+name = "playpen-profile"
+version = "0.1.0"
+edition = "2024"
+description = "Profile 管理与动态加载：Profile 类型、Loader、Resolver trait"
+
+[dependencies]
+playpen-config = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+anyhow = "1"
+chrono = "0.4"
+htmlescape = "0.3"
+serde_yaml = "0.9"
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"
+pretty_assertions = "1"

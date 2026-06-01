@@ -1,0 +1,28 @@
+[package]
+name = "playpen-acp"
+version = "0.1.0"
+edition = "2024"
+description = "ACP 协议适配：纯映射层，Event → SessionUpdate"
+
+[dependencies]
+playpen-agent = { path = "../playpen-agent" }
+playpen-content = { path = "../playpen-content" }
+playpen-session = { path = "../playpen-session" }
+playpen-profile = { path = "../playpen-profile" }
+playpen-config = { path = "../playpen-config" }
+agent-client-protocol = { version = "1.0.0", features = ["unstable_end_turn_token_usage"] }
+base64 = "0.22"
+tokio = { workspace = true, features = ["io-util"] }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+futures = "0.3"
+tokio-util = { version = "0.7.18", features = ["compat", "io"] }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+rig-core = { version = "0.39", features = ["test-utils"] }
+sea-orm = { version = "1", features = ["sqlx-sqlite", "runtime-tokio"] }
