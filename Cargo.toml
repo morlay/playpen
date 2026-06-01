@@ -1,0 +1,46 @@
+[workspace]
+members = [
+  "rustpkg/playpen-sandbox",
+  "rustpkg/playpen-profile",
+  "rustpkg/playpen-toolkit",
+  "rustpkg/playpen-config",
+  "rustpkg/playpen-acp",
+  "rustpkg/playpen",
+  "rustpkg/playpen-content",
+  "rustpkg/playpen-session",
+  "rustpkg/playpen-agent",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+
+playpen-sandbox = { path = "rustpkg/playpen-sandbox" }
+playpen-profile = { path = "rustpkg/playpen-profile" }
+playpen-toolkit = { path = "rustpkg/playpen-toolkit" }
+playpen-config = { path = "rustpkg/playpen-config" }
+playpen-acp = { path = "rustpkg/playpen-acp" }
+playpen-agent = { path = "rustpkg/playpen-agent" }
+playpen-session = { path = "rustpkg/playpen-session" }
+playpen-content = { path = "rustpkg/playpen-content" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = { version = "1", features = ["derive"] }
+async-trait = "0.1"
+anyhow = "1"
+tracing = "0.1.44"
+tracing-subscriber = { version = "=0.3.20", features = ["env-filter", "json"] }
+uuid = { version = "1", features = ["v7"] }
+chrono = { version = "0.4", features = ["serde"] }
+futures = "0.3"
+thiserror = "2"
+async-stream = "0.3"
+rustls = "0.23"
+
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
+sea-orm = { version = "1", features = ["sqlx-sqlite", "runtime-tokio"] }
+indexmap = "2"

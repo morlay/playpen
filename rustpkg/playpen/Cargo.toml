@@ -1,0 +1,27 @@
+[package]
+name = "playpen"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+playpen-sandbox = { workspace = true }
+playpen-config = { workspace = true }
+playpen-agent = { workspace = true }
+playpen-session = { workspace = true }
+playpen-profile = { workspace = true }
+playpen-acp = { workspace = true }
+playpen-content = { workspace = true }
+agent-client-protocol = "1.2.0"
+clap = { version = "4", features = ["derive"] }
+toml = "1"
+tokio = { workspace = true }
+rustyline = "18"
+console = "0.16"
+futures = "0.3"
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sea-orm = { workspace = true }
+sqlx = { workspace = true }
+tracing-subscriber = { workspace = true }
+chrono = "0.4"

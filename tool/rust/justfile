@@ -1,0 +1,56 @@
+# 列出 Rust 工具链公共入口
+[group('meta')]
+default:
+    @just --list
+
+# 构建指定 Rust 包（默认全部 workspace）
+[group('build')]
+[no-cd]
+build *args="--workspace":
+    cargo build {{ args }}
+
+# 运行 Rust 包单元测试（不含 E2E，默认全部 workspace）
+[group('test')]
+[no-cd]
+test *args="--workspace":
+    cargo test --lib {{ args }} -- --nocapture
+
+# 运行 Rust 包集成测试（E2E，按需运行，release 模式加速，默认全部 workspace）
+[group('test')]
+[no-cd]
+e2e *args="--workspace":
+    cargo test --release --tests {{ args }} -- --nocapture
+
+[group('test')]
+[no-cd]
+cover *args="--workspace":
+    cargo llvm-cov {{ args }} --summary-only
+
+# 检查 Rust 包代码问题（默认全部 workspace）
+[group('lint')]
+[no-cd]
+lint *args="--workspace":
+    cargo clippy {{ args }} --fix --allow-dirty --all-targets -- -D warnings
+
+# 格式化 Rust 包（默认全部 workspace）
+[group('fmt')]
+[no-cd]
+fmt *args="--all":
+    cargo fmt {{ args }}
+
+# 安装指定 Rust 包
+[group('build')]
+[no-cd]
+install pkg:
+    cargo install --path ./rustpkg/{{ pkg }}
+
+# 运行对应
+[group('dev')]
+[no-cd]
+run pkg *args:
+    cargo run -p {{ pkg }} {{ args }}
+
+[group('dev')]
+[no-cd]
+clean:
+    cargo clean

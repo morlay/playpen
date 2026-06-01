@@ -1,0 +1,78 @@
+# 规则语法：
+#
+#   前缀：
+#     rw → 读写允许
+#     r- → 只读
+#     -- → 拒绝
+#
+#   模式（兼容 .gitignore 语义）：
+#     /path       → 绝对路径前缀
+#     ~/path/     → HOME 相对路径
+#     dir/        → 目录匹配（任意）
+#     ./rel/path  → 当前 cwd 目录匹配
+#     *.ext       → 后缀通配
+#     .name       → 精确文件名匹配
+[sandbox.filesystem]
+access = ["""
+# 当前目录可读写
+rw .
+# HOME 目录只读（login shell 加载配置需要）
+r- ~/
+# 排除相对路径
+-- ./.secrets/
+
+# 缓存目录读写
+rw .cache/
+rw go/pkg/
+rw node_modules/
+
+# 系统路径只读
+r- /etc/
+r- /usr/
+
+# 敏感文件显式拒绝
+-- .env
+-- .env.*
+-- *.pem
+-- *.key
+-- .ssh/
+"""]
+
+# 后续规则
+# 都是 ! 做细分排除
+[sandbox.network]
+access = ["""
+*.example.com
+!api.example.com
+"""]
+
+[sandbox.shell]
+# 是否允许管道 |
+allow_pipe = true
+# 是否允许 && 和 ;
+allow_multiple = false
+# 命令权限
+allow = ["""
+# git（禁止危险操作）
+git *
+!git push *
+!git reset --hard *
+
+# 统一入口
+just *
+
+# 强化工具
+rg *
+sg *
+jq *
+fd *
+
+# 常用
+head *
+tail *
+cut *
+wc *
+sort *
+awk *
+uniq *
+"""]

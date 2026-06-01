@@ -1,0 +1,22 @@
+[package]
+name = "playpen-session"
+version = "0.1.0"
+edition = "2024"
+description = "Session 管理：SessionService trait + sea-orm sqlite 实现"
+
+[dependencies]
+playpen-content = { path = "../playpen-content" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+zstd = "0.13"
+sea-orm = { version = "1", features = ["sqlx-sqlite", "runtime-tokio"] }
+tracing = { workspace = true }
+futures = { workspace = true }
+sea-orm-migration = "1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

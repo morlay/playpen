@@ -1,0 +1,3 @@
+[default_model_profile]
+model = "deepseek/deepseek-v4-flash"
+top_p = 0.9
