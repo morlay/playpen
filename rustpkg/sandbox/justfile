@@ -1,0 +1,11 @@
+# 下载 seatbelt 策略文件（从 openai/codex）
+[group('build')]
+download:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    BASE="https://raw.githubusercontent.com/openai/codex/main/codex-rs/sandboxing/src"
+    DST="src"
+    curl -sfL "$BASE/seatbelt_base_policy.sbpl" -o "$DST/seatbelt_base_policy.sbpl"
+    curl -sfL "$BASE/seatbelt_network_policy.sbpl" -o "$DST/seatbelt_network_policy.sbpl"
+    curl -sfL "$BASE/restricted_read_only_platform_defaults.sbpl" -o "$DST/seatbelt_restricted_read_only_platform_defaults.sbpl"
+    echo "seatbelt 策略文件已下载到 $DST/"
