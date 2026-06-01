@@ -1,0 +1,11 @@
+[workspace]
+members = [
+    "rustpkg/sandbox",
+    "rustpkg/playpen-zed-agent",
+    "rustpkg/playpen",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"

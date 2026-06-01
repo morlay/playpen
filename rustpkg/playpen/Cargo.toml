@@ -1,0 +1,13 @@
+[package]
+name = "playpen"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+sandbox = { path = "../sandbox" }
+playpen-zed-agent = { path = "../playpen-zed-agent" }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+anyhow = "1"
+rustyline = "18"
