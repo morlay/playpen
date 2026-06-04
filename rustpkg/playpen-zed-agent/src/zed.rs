@@ -4,28 +4,21 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use sandbox::config::{self, Config, ParsedRule, RulePrefix};
+use sandbox::config::{ParsedRule, RulePrefix};
 
 /// 工具名 → 权限映射
 pub type ToolPermissions = HashMap<String, ZedToolPermission>;
 
 /// 生成 zed agent 配置。write 为 true 时写入 settings.json（自动备份），否则输出到 stdout。
 pub fn setup_zed_agent(
-    sandbox_config: &Config,
+    filesystem_rules: &[ParsedRule],
     cwd: &Path,
     profile_name: &str,
     global_settings: &Path,
     project_settings: Option<&Path>,
     write: bool,
 ) -> anyhow::Result<()> {
-    let filesystem_rules = sandbox_config
-        .filesystem
-        .as_ref()
-        .and_then(|f| f.access.as_deref())
-        .map(config::parse_filesystem_string)
-        .unwrap_or_default();
-
-    let tool_permissions = generate_tool_permissions(&filesystem_rules, cwd);
+    let tool_permissions = generate_tool_permissions(filesystem_rules, cwd);
     let profiles = generate_profiles(profile_name);
 
     let tool_permissions = filter_by_profile(&tool_permissions, &profiles, profile_name);

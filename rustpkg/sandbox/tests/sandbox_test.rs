@@ -1,12 +1,9 @@
 use sandbox::Sandbox;
 use std::path::PathBuf;
 
-/// 在 sandbox 内运行时跳过（嵌套 sandbox-exec 无意义）
 macro_rules! skip_if_sandboxed {
     () => {
-        if std::env::var("PLAYPEN_SANDBOXED").is_ok() {
-            return;
-        }
+        if std::env::var("PLAYPEN_SANDBOXED").is_ok() { return; }
     };
 }
 
@@ -19,11 +16,11 @@ fn shell_allow_cat() -> sandbox::config::Config {
         shell: Some(sandbox::config::ShellSection {
             allow_pipe: Some(true),
             allow_multiple: Some(true),
-            allow: Some(
-                r#"cat *
+            allow: r#"cat *
 echo *"#
-                    .into(),
-            ),
+                .lines()
+                .map(|s| s.to_string())
+                .collect(),
         }),
         ..Default::default()
     }
@@ -33,7 +30,6 @@ fn tmpdir() -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-    // 使用项目本地目录，避免 platform defaults 中 (allow ... (subpath "/tmp")) 提前放行
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target")
         .join("test_tmp");
@@ -68,6 +64,10 @@ fn exec_deny_command_blocked() {
     assert!(result.is_err());
 }
 
+fn access_lines(raw: &str) -> Vec<String> {
+    raw.lines().map(|s| s.to_string()).collect()
+}
+
 #[test]
 fn exec_deny_read() {
     skip_if_sandboxed!();
@@ -78,11 +78,7 @@ fn exec_deny_read() {
     let config = Sandbox::create_config(
         &sandbox::config::Config {
             filesystem: Some(sandbox::config::AllowSection {
-                access: Some(
-                    r#"rw .
--- .env"#
-                        .into(),
-                ),
+                access: access_lines("rw .\n-- .env"),
             }),
             ..shell_allow_cat()
         },
@@ -93,11 +89,7 @@ fn exec_deny_read() {
     let cmd = format!("cat {}", file.display());
     let result = Sandbox::exec(&cmd, &dir, &config);
     assert!(result.is_ok());
-    assert_ne!(
-        result.unwrap().code,
-        0,
-        "deny 读应被 seatbelt 拒绝（exit != 0）"
-    );
+    assert_ne!(result.unwrap().code, 0, "deny 读应被 seatbelt 拒绝（exit != 0）");
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -111,11 +103,7 @@ fn exec_deny_write() {
     let config = Sandbox::create_config(
         &sandbox::config::Config {
             filesystem: Some(sandbox::config::AllowSection {
-                access: Some(
-                    r#"rw .
--- .env"#
-                        .into(),
-                ),
+                access: access_lines("rw .\n-- .env"),
             }),
             ..shell_allow_cat()
         },
@@ -126,11 +114,7 @@ fn exec_deny_write() {
     let cmd = format!("echo data > {}", file.display());
     let result = Sandbox::exec(&cmd, &dir, &config);
     assert!(result.is_ok());
-    assert_ne!(
-        result.unwrap().code,
-        0,
-        "deny 写应被 seatbelt 拒绝（exit != 0）"
-    );
+    assert_ne!(result.unwrap().code, 0, "deny 写应被 seatbelt 拒绝（exit != 0）");
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -145,11 +129,7 @@ fn exec_readonly_write_blocked() {
     let config = Sandbox::create_config(
         &sandbox::config::Config {
             filesystem: Some(sandbox::config::AllowSection {
-                access: Some(
-                    r#"rw .
-r- readonly.txt"#
-                        .into(),
-                ),
+                access: access_lines("rw .\nr- readonly.txt"),
             }),
             ..shell_allow_cat()
         },
@@ -179,7 +159,7 @@ fn exec_readonly_overrides_deny_pattern() {
     let config = Sandbox::create_config(
         &sandbox::config::Config {
             filesystem: Some(sandbox::config::AllowSection {
-                access: Some(format!("rw .\n-- *.pem\nr- {}", pem.display())),
+                access: access_lines(&format!("rw .\n-- *.pem\nr- {}", pem.display())),
             }),
             ..shell_allow_cat()
         },
@@ -205,7 +185,7 @@ fn exec_allow_read_write() {
     let config = Sandbox::create_config(
         &sandbox::config::Config {
             filesystem: Some(sandbox::config::AllowSection {
-                access: Some("rw .".into()),
+                access: vec!["rw .".into()],
             }),
             ..shell_allow_cat()
         },

@@ -15,19 +15,14 @@ impl Sandbox {
         let filesystem_rules = toml_config
             .filesystem
             .as_ref()
-            .and_then(|f| f.access.as_deref())
-            .map(crate::config::parse_filesystem_string)
+            .map(|f| crate::config::parse_filesystem_access(&f.access))
             .unwrap_or_default();
 
         let policy_class = classify_policy(&filesystem_rules, cwd);
 
         let shell_section = toml_config.shell.clone().unwrap_or_default();
 
-        let exec_policy = shell_section
-            .allow
-            .as_deref()
-            .map(ShellPolicy::from_raw)
-            .unwrap_or_default();
+        let exec_policy = ShellPolicy::from_rules(&shell_section.allow);
 
         SandboxConfig {
             shell_bin: shell_bin.to_string(),

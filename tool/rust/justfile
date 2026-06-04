@@ -15,6 +15,11 @@ build *args="--workspace":
 test *args="--workspace":
     cargo test {{ args }} -- --nocapture
 
+[group('test')]
+[no-cd]
+cover *args="--workspace":
+    cargo llvm-cov {{ args }} --summary-only
+
 # 检查 Rust 包代码问题（默认全部 workspace）
 [group('lint')]
 [no-cd]
@@ -32,3 +37,9 @@ fmt *args="--all":
 [no-cd]
 install pkg:
     cargo install --path ./rustpkg/{{ pkg }}
+
+# 运行对应
+[group('dev')]
+[no-cd]
+run pkg *args:
+    cargo run -p {{ pkg }} {{ args }}

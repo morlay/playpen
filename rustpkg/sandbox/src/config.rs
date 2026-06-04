@@ -1,34 +1,41 @@
-use serde::Deserialize;
+use merge::Merge;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// config.toml 顶层结构
-#[derive(Debug, Deserialize, Default, Clone)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone, Merge)]
 pub struct Config {
+    #[merge(strategy = merge::option::recurse)]
     pub network: Option<AllowSection>,
+    #[merge(strategy = merge::option::recurse)]
     pub filesystem: Option<AllowSection>,
+    #[merge(strategy = merge::option::recurse)]
     pub shell: Option<ShellSection>,
 }
 
-#[derive(Debug, Deserialize, Default, Clone)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone, Merge)]
 pub struct AllowSection {
-    pub access: Option<String>,
+    #[serde(default)]
+    #[merge(strategy = merge::vec::append)]
+    pub access: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Default, Clone)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone, Merge)]
 pub struct ShellSection {
+    #[merge(strategy = merge::option::overwrite_none)]
     pub allow_pipe: Option<bool>,
+    #[merge(strategy = merge::option::overwrite_none)]
     pub allow_multiple: Option<bool>,
-    pub allow: Option<String>,
+    #[serde(default)]
+    #[merge(strategy = merge::vec::append)]
+    pub allow: Vec<String>,
 }
 
 /// 单条规则的前缀类型
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum RulePrefix {
-    /// 允许
     Allow,
-    /// 拒绝
     Deny,
-    /// 只读
     ReadOnly,
 }
 
@@ -40,24 +47,30 @@ pub struct ParsedRule {
     pub pattern: String,
 }
 
-/// 解析 access/allow 字符串，按行拆分并识别前缀。
-/// 空行和 # 开头的注释行会被跳过。
-///
-/// 前缀（filesystem）：
-/// - `rw ` → 读写允许 (Allow)
-/// - `r- ` → 只读 (ReadOnly)
-/// - `-- ` → 拒绝 (Deny)
-/// - 无前缀 → 允许 (Allow)
-pub fn parse_filesystem_string(raw: &str) -> Vec<ParsedRule> {
-    let mut rules = Vec::new();
+// ── 解析函数 ──
 
-    for line in raw.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
+/// 将 access 条目按行展开（支持多行字符串），再解析为 filesystem 规则。
+pub fn parse_filesystem_access(access: &[String]) -> Vec<ParsedRule> {
+    let lines: Vec<String> = access
+        .iter()
+        .flat_map(|s| s.lines().map(|l| l.to_string()))
+        .collect();
+    parse_filesystem_rules(&lines)
+}
 
-        let (prefix, pattern) = if let Some(rest) = trimmed.strip_prefix("rw") {
+/// 将 access 条目按行展开（支持多行字符串），再解析为 network 规则。
+pub fn parse_network_access(access: &[String]) -> Vec<ParsedRule> {
+    let lines: Vec<String> = access
+        .iter()
+        .flat_map(|s| s.lines().map(|l| l.to_string()))
+        .collect();
+    parse_network_rules(&lines)
+}
+
+/// 解析多条 filesystem 规则（输入已逐行拆分）
+pub fn parse_filesystem_rules(rules: &[String]) -> Vec<ParsedRule> {
+    parse_rules(rules, |trimmed| {
+        if let Some(rest) = trimmed.strip_prefix("rw") {
             (RulePrefix::Allow, rest.trim().to_string())
         } else if let Some(rest) = trimmed.strip_prefix("r-") {
             (RulePrefix::ReadOnly, rest.trim().to_string())
@@ -65,62 +78,62 @@ pub fn parse_filesystem_string(raw: &str) -> Vec<ParsedRule> {
             (RulePrefix::Deny, rest.trim().to_string())
         } else {
             (RulePrefix::Allow, trimmed.to_string())
-        };
-
-        rules.push(ParsedRule {
-            raw: trimmed.to_string(),
-            prefix,
-            pattern,
-        });
-    }
-
-    rules
+        }
+    })
 }
 
-/// 解析 network access 字符串，按行拆分并识别前缀。
-/// 空行和 # 开头的注释行会被跳过。
-///
-/// 前缀（network）：
-/// - `!`  → 拒绝 (Deny)
-/// - 无前缀 → 允许 (Allow)
-pub fn parse_network_string(raw: &str) -> Vec<ParsedRule> {
-    let mut rules = Vec::new();
-
-    for line in raw.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-
-        let (prefix, pattern) = if let Some(rest) = trimmed.strip_prefix('!') {
+/// 解析多条 network 规则（输入已逐行拆分）
+pub fn parse_network_rules(rules: &[String]) -> Vec<ParsedRule> {
+    parse_rules(rules, |trimmed| {
+        if let Some(rest) = trimmed.strip_prefix('!') {
             (RulePrefix::Deny, rest.to_string())
         } else {
             (RulePrefix::Allow, trimmed.to_string())
-        };
+        }
+    })
+}
 
-        rules.push(ParsedRule {
+fn parse_rules(
+    rules: &[String],
+    classify: impl Fn(&str) -> (RulePrefix, String),
+) -> Vec<ParsedRule> {
+    let mut out = Vec::new();
+    for raw in rules {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let (prefix, pattern) = classify(trimmed);
+        out.push(ParsedRule {
             raw: trimmed.to_string(),
             prefix,
             pattern,
         });
     }
-
-    rules
+    out
 }
 
-/// 验证结果
+/// 解析 filesystem 字符串，按行拆分并识别前缀（向后兼容）
+pub fn parse_filesystem_string(raw: &str) -> Vec<ParsedRule> {
+    let lines: Vec<String> = raw.lines().map(|s| s.to_string()).collect();
+    parse_filesystem_rules(&lines)
+}
+
+/// 解析 network 字符串，按行拆分并识别前缀（向后兼容）
+pub fn parse_network_string(raw: &str) -> Vec<ParsedRule> {
+    let lines: Vec<String> = raw.lines().map(|s| s.to_string()).collect();
+    parse_network_rules(&lines)
+}
+
+// ── 验证函数 ──
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ValidationResult {
-    /// 允许
     Allowed,
-    /// 拒绝
     Denied,
-    /// 只读
     ReadOnly,
 }
 
-/// 验证给定路径是否匹配 filesystem 规则。
-/// 沙箱默认拒绝——无规则或有规则但未命中时均返回 Denied。
 pub fn validate_filesystem_path(
     rules: &[ParsedRule],
     cwd: &Path,
@@ -143,7 +156,6 @@ pub fn validate_filesystem_path(
     ValidationResult::Denied
 }
 
-/// 返回匹配给定路径的规则（用于打印规则详情）
 pub fn find_filesystem_rule<'a>(
     rules: &'a [ParsedRule],
     cwd: &Path,
@@ -154,8 +166,6 @@ pub fn find_filesystem_rule<'a>(
         .find(|r| filesystem_pattern_matches(&r.pattern, target, cwd))
 }
 
-/// 验证给定域名是否匹配 network 规则。
-/// 沙箱默认拒绝——无规则或有规则但未命中时均返回 Denied。
 pub fn validate_network_domain(rules: &[ParsedRule], domain: &str) -> ValidationResult {
     if rules.is_empty() {
         return ValidationResult::Denied;
@@ -174,15 +184,12 @@ pub fn validate_network_domain(rules: &[ParsedRule], domain: &str) -> Validation
     ValidationResult::Denied
 }
 
-/// 检查 target 路径是否匹配 filesystem 规则模式
 fn filesystem_pattern_matches(pattern: &str, target: &Path, cwd: &Path) -> bool {
-    // 路径模式（包含 /、~、或为 .）
     if pattern.contains('/') || pattern.starts_with('~') || pattern == "." {
         let resolved = resolve_pattern(pattern, cwd);
         return target.to_string_lossy().starts_with(&resolved);
     }
 
-    // 文件名模式：匹配 target 的文件名组件
     if let Some(filename) = target.file_name().and_then(|f| f.to_str()) {
         return simple_glob_match(pattern, filename);
     }
@@ -190,7 +197,6 @@ fn filesystem_pattern_matches(pattern: &str, target: &Path, cwd: &Path) -> bool 
     false
 }
 
-/// 简单的 glob 匹配，仅支持 `*` 通配符
 pub fn simple_glob_match(pattern: &str, target: &str) -> bool {
     if pattern == "*" {
         return true;
@@ -223,10 +229,6 @@ pub fn simple_glob_match(pattern: &str, target: &str) -> bool {
     true
 }
 
-#[cfg(test)]
-#[path = "config_test.rs"]
-mod tests;
-
 pub fn resolve_pattern(pattern: &str, cwd: &Path) -> String {
     if pattern == "." {
         return cwd.to_string_lossy().to_string();
@@ -245,3 +247,7 @@ pub fn resolve_pattern(pattern: &str, cwd: &Path) -> String {
 
     pattern.to_string()
 }
+
+#[cfg(test)]
+#[path = "config_test.rs"]
+mod tests;

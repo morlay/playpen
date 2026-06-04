@@ -47,7 +47,7 @@ playpen setup zed-agent code --write
 
 ## 配置
 
-参见 [example/playpen.toml](./example/playpen.toml)。配置语法详见 [sandbox README](./rustpkg/sandbox/README.md#规则语法)。
+参见 [example/sandbox.toml](./example/sandbox.toml)。配置语法详见 [sandbox README](./rustpkg/sandbox/README.md#规则语法)。
 
 ### 文件系统 / 网络
 

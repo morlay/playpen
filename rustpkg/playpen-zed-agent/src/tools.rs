@@ -60,11 +60,15 @@ pub const TOOLS: &[ToolDef] = &[
         category: ToolCategory::FilesystemRead,
         default_permission: Some("allow"),
         prompt_guideline: None,
-        prompt_guideline_disabled: Some(
-            r"
-读取文件内容用 `bat ...`
-",
-        ),
+        prompt_guideline_disabled: None,
+    },
+    ToolDef {
+        name: "list_directory",
+        enabled: true,
+        category: ToolCategory::FilesystemRead,
+        default_permission: None,
+        prompt_guideline: None,
+        prompt_guideline_disabled: None,
     },
     // ---- 文件写入 ----
     ToolDef {
@@ -156,14 +160,6 @@ HTTP 请求用 fetch()，**不要用 `curl` / `wget`**
     },
     ToolDef {
         name: "copy_path",
-        enabled: false,
-        category: ToolCategory::Other,
-        default_permission: None,
-        prompt_guideline: None,
-        prompt_guideline_disabled: None,
-    },
-    ToolDef {
-        name: "list_directory",
         enabled: false,
         category: ToolCategory::Other,
         default_permission: None,

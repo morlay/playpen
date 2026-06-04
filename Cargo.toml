@@ -1,8 +1,10 @@
 [workspace]
 members = [
-    "rustpkg/sandbox",
-    "rustpkg/playpen-zed-agent",
-    "rustpkg/playpen",
+  "rustpkg/sandbox",
+  "rustpkg/playpen-zed-agent",
+  "rustpkg/playpen",
+  "rustpkg/playpen-agent-core",
+  "rustpkg/playpen-acp",
 ]
 resolver = "2"
 

@@ -12,8 +12,8 @@
 #     ./rel/path  → 当前 cwd 目录匹配
 #     *.ext       → 后缀通配
 #     .name       → 精确文件名匹配
-[filesystem]
-access = """
+[sandbox.filesystem]
+access = ["""
 # 当前目录可读写
 rw .
 # HOME 目录只读（login shell 加载配置需要）
@@ -36,24 +36,23 @@ r- /usr/
 -- *.pem
 -- *.key
 -- .ssh/
-"""
-
+"""]
 
 # 后续规则
 # 都是 ! 做细分排除
-[network]
-access = """
+[sandbox.network]
+access = ["""
 *.example.com
 !api.example.com
-"""
+"""]
 
-[shell]
+[sandbox.shell]
 # 是否允许管道 |
 allow_pipe = true
 # 是否允许 && 和 ;
 allow_multiple = false
 # 命令权限
-allow = """
+allow = ["""
 # git（禁止危险操作）
 git *
 !git push *
@@ -76,4 +75,4 @@ wc *
 sort *
 awk *
 uniq *
-"""
+"""]

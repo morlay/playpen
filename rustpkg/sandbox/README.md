@@ -6,7 +6,7 @@ macOS Seatbelt（`sandbox-exec`）封装——将 playpen 配置规则编译为 
 
 **默认拒绝**——未匹配的路径 / 域名 / 命令均被拦截。仅在规则中显式声明后才放行。
 
-规则定义在 `playpen.toml` 中（项目级 `.playpen.toml`，全局 `~/.config/playpen.toml`），`access`/`allow` 字符串按顺序拼接（全局在前）。
+规则定义在 TOML 配置中，多来源按序合并（后加载覆盖先加载）：全局 `~/.config/playpen/settings.toml` + `~/.config/playpen/conf.d/*.toml`，项目级 `<cwd>/.playpen.toml`。
 
 ## 规则语法
 

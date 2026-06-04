@@ -19,6 +19,14 @@ pub struct ShellConfig {
     pub allow_multiple: bool,
 }
 
+/// 将命令行参数列表安全拼接为 shell 命令字符串。
+/// 自动为包含特殊字符（如 `&`、`|`、空格等）的参数添加必要的引号保护，
+/// 避免被 shell 解释为控制操作符。
+pub fn join_args(args: &[String]) -> Result<String, String> {
+    shlex::try_join(args.iter().map(|s| s.as_str()))
+        .map_err(|e| format!("命令参数拼接失败: {e}"))
+}
+
 /// 用 shlex 解析命令字符串，检测管道和命令串联。
 pub fn parse_shell(command: &str) -> ParsedShell {
     let mut commands: Vec<Vec<String>> = Vec::new();

@@ -1,6 +1,5 @@
 use crate::config::{ParsedRule, RulePrefix};
 
-/// Shell 命令权限规则
 #[derive(Debug, Clone)]
 pub struct ShellRule {
     pub raw: String,
@@ -9,7 +8,6 @@ pub struct ShellRule {
     pub allowed: bool,
 }
 
-/// Shell 权限策略
 #[derive(Debug, Clone, Default)]
 pub struct ShellPolicy {
     rules: Vec<ShellRule>,
@@ -20,31 +18,34 @@ impl ShellPolicy {
         self.rules.is_empty()
     }
 
-    pub fn from_raw(raw: &str) -> Self {
-        let mut rules = Vec::new();
+    pub fn from_rules(rules: &[String]) -> Self {
+        Self::from_iter(rules.iter().map(|s| s.as_str()))
+    }
 
-        for line in raw.lines() {
+    pub fn from_raw(raw: &str) -> Self {
+        Self::from_iter(raw.lines())
+    }
+
+    fn from_iter<'a>(lines: impl Iterator<Item = &'a str>) -> Self {
+        let mut rules = Vec::new();
+        for line in lines {
             let trimmed = line.trim();
             if trimmed.is_empty() || trimmed.starts_with('#') {
                 continue;
             }
-
             let (pattern, allowed) = if let Some(rest) = trimmed.strip_prefix('!') {
                 (rest.trim(), false)
             } else {
                 (trimmed, true)
             };
-
             let parts: Vec<String> = pattern
                 .split_whitespace()
                 .filter(|p| *p != "*")
                 .map(|s| s.to_string())
                 .collect();
-
             if parts.is_empty() {
                 continue;
             }
-
             rules.push(ShellRule {
                 raw: trimmed.to_string(),
                 command_name: parts[0].clone(),
@@ -52,14 +53,12 @@ impl ShellPolicy {
                 allowed,
             });
         }
-
         rules.sort_by(|a, b| {
             b.arg_patterns
                 .len()
                 .cmp(&a.arg_patterns.len())
                 .then_with(|| a.raw.len().cmp(&b.raw.len()))
         });
-
         ShellPolicy { rules }
     }
 
@@ -67,44 +66,30 @@ impl ShellPolicy {
         if self.rules.is_empty() {
             return Some(true);
         }
-
         if cmd.is_empty() {
             return Some(false);
         }
-
         let non_flag_args: Vec<&String> = cmd[1..].iter().filter(|a| !a.starts_with('-')).collect();
-
         for rule in &self.rules {
             if rule.command_name != "*" && rule.command_name != cmd[0] {
                 continue;
             }
-
             if non_flag_args.len() < rule.arg_patterns.len() {
                 continue;
             }
-
             let prefix_match = rule
                 .arg_patterns
                 .iter()
                 .zip(non_flag_args.iter())
                 .all(|(pat, arg)| *pat == **arg);
-
             if prefix_match {
                 return Some(rule.allowed);
             }
         }
-
         None
     }
 }
 
-/// 从解析后的规则列表构建文件系统策略分类。
-///
-/// 路径分类：
-/// - `/abs`、`~/abs` → 绝对路径，subpath 匹配
-/// - `./rel` → cwd 相对路径，subpath 匹配
-/// - `dir/`（含 `/` 但非绝对/相对）→ 目录模式，regex 匹配（任意位置）
-/// - 无 `/` → 文件名模式，regex 匹配
 pub fn classify_policy(rules: &[ParsedRule], cwd: &std::path::Path) -> PolicyClassification {
     let mut writable_roots: Vec<String> = Vec::new();
     let mut writable_patterns: Vec<String> = Vec::new();
@@ -170,15 +155,11 @@ fn resolve_subpath(pattern: &str, cwd: &std::path::Path) -> String {
     pattern.to_string()
 }
 
+#[derive(Debug, Clone, Default)]
 pub struct PolicyClassification {
-    /// Allow 规则的路径（已解析为绝对路径）
     pub writable_roots: Vec<String>,
-    /// Allow 规则的文件名模式（目录模式）
     pub writable_patterns: Vec<String>,
-    /// Deny 规则的模式（路径或文件名 glob）
     pub deny_patterns: Vec<String>,
-    /// ReadOnly 规则的路径（已解析为绝对路径）
     pub readonly_roots: Vec<String>,
-    /// ReadOnly 规则的文件名模式（仅禁止写入，不禁止读取）
     pub readonly_patterns: Vec<String>,
 }

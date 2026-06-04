@@ -52,7 +52,7 @@ pub fn generate_agents_md(
     }
 
     if !guidelines.is_empty() {
-        content.push_str("## 使用指南\n");
+        content.push_str("## 工具使用指南\n");
         for g in &guidelines {
             content.push_str(&format!("- {}\n", g));
         }
