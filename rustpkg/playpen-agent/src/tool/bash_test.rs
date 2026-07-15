@@ -226,3 +226,22 @@ async fn test_exit_code_annotation() {
         _ => panic!("期望 ContentBlock::Resource"),
     }
 }
+
+/// SpawnFailed 应向上传播为 error，不吞没
+#[tokio::test]
+async fn test_spawn_failed_propagates_error() {
+    let tool = make_tool(vec![CommandOutput::SpawnFailed {
+        message: "sh: command not found".into(),
+    }]);
+    let (ctx, _rx) = make_ctx();
+    let err = tool
+        .execute(ctx, serde_json::json!({"command": "whatever"}))
+        .await
+        .expect_err("SpawnFailed 应返回错误");
+
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("sh: command not found"),
+        "错误信息应包含原始消息，实际: {msg}"
+    );
+}

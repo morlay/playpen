@@ -72,7 +72,15 @@ impl Tool for BashTool {
                     cancelled = true;
                     break;
                 }
+                CommandOutput::SpawnFailed { message } => {
+                    anyhow::bail!("命令启动失败: {message}");
+                }
             }
+        }
+
+        // rx.recv() 返回 None（channel 关闭）但未收到 Exited 事件时，默认视为 exit 0
+        if exit_code.is_none() && !cancelled {
+            exit_code = Some(0);
         }
 
         let mut blocks: Vec<ContentBlock> = Vec::new();

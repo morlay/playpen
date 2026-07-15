@@ -12,10 +12,16 @@ pub enum CommandOutput {
     Stderr {
         text: String,
     },
+    #[serde(rename = "exited")]
     Exited {
         code: i32,
     },
+    #[serde(rename = "cancelled")]
     Cancelled,
+    #[serde(rename = "spawn_failed")]
+    SpawnFailed {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]

@@ -38,6 +38,9 @@ impl Terminal for NativeTerminal {
                 Ok(child) => child,
                 Err(e) => {
                     tracing::warn!(error = %e, command = %cmd.command, "启动命令失败");
+                    let _ = tx.send(CommandOutput::SpawnFailed {
+                        message: format!("{e}"),
+                    });
                     return;
                 }
             };
@@ -49,14 +52,23 @@ impl Terminal for NativeTerminal {
             let stdout_task = tokio::spawn(async move {
                 let reader = BufReader::new(stdout);
                 let mut lines = reader.lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    if tx_stdout
-                        .send(CommandOutput::Stdout {
-                            text: format!("{line}\n"),
-                        })
-                        .is_err()
-                    {
-                        break;
+                loop {
+                    match lines.next_line().await {
+                        Ok(Some(line)) => {
+                            if tx_stdout
+                                .send(CommandOutput::Stdout {
+                                    text: format!("{line}\n"),
+                                })
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "读取 stdout 失败");
+                            break;
+                        }
                     }
                 }
             });
@@ -65,17 +77,30 @@ impl Terminal for NativeTerminal {
             let stderr_task = tokio::spawn(async move {
                 let reader = BufReader::new(stderr);
                 let mut lines = reader.lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    if tx_stderr
-                        .send(CommandOutput::Stderr {
-                            text: format!("{line}\n"),
-                        })
-                        .is_err()
-                    {
-                        break;
+                loop {
+                    match lines.next_line().await {
+                        Ok(Some(line)) => {
+                            if tx_stderr
+                                .send(CommandOutput::Stderr {
+                                    text: format!("{line}\n"),
+                                })
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "读取 stderr 失败");
+                            break;
+                        }
                     }
                 }
             });
+
+            // 先等所有输出 drain 完，再发退出信号
+            let _ = stdout_task.await;
+            let _ = stderr_task.await;
 
             let exit_code = |status: std::process::ExitStatus| status.code().unwrap_or(-1);
 
@@ -96,10 +121,6 @@ impl Terminal for NativeTerminal {
                 let code = status.map(&exit_code).unwrap_or(-1);
                 let _ = tx.send(CommandOutput::Exited { code });
             }
-
-            // 等待读取任务完成，确保所有输出已被消费
-            let _ = stdout_task.await;
-            let _ = stderr_task.await;
         });
 
         Ok(rx)

@@ -25,5 +25,18 @@ fn output_type_serde() {
 
     let exited = CommandOutput::Exited { code: 0 };
     let json = serde_json::to_string(&exited).unwrap();
-    assert!(json.contains("Exited"));
+    assert!(json.contains("exited"));
+}
+
+#[test]
+fn spawn_failed_serde() {
+    let sf = CommandOutput::SpawnFailed {
+        message: "sh not found".into(),
+    };
+    let json = serde_json::to_string(&sf).unwrap();
+    assert!(json.contains("spawn_failed"));
+    assert!(json.contains("sh not found"));
+
+    let deserialized: CommandOutput = serde_json::from_str(&json).unwrap();
+    assert!(matches!(deserialized, CommandOutput::SpawnFailed { message } if message == "sh not found"));
 }
