@@ -85,7 +85,7 @@ mod tests {
                 .await
                 .map_err(|_| anyhow::anyhow!("session {id} 不存在"))?;
 
-            let profile: Box<dyn playpen_profile::AgentProfile> = Box::new(TestProfile);
+            let profile: Box<dyn playpen_profile::AgentProfile> = Box::new(TestProfile::default());
             let inner = SimpleRunner::new(
                 id.to_string(),
                 session,
@@ -99,7 +99,7 @@ mod tests {
             }))
         }
         fn agent_profiles(&self) -> anyhow::Result<Vec<Box<dyn playpen_profile::AgentProfile>>> {
-            Ok(vec![Box::new(TestProfile)])
+            Ok(vec![Box::new(TestProfile::default())])
         }
         fn sessions(&self) -> &dyn SessionService {
             panic!("sessions() not available")

@@ -40,3 +40,13 @@ fn spawn_failed_serde() {
     let deserialized: CommandOutput = serde_json::from_str(&json).unwrap();
     assert!(matches!(deserialized, CommandOutput::SpawnFailed { message } if message == "sh not found"));
 }
+
+#[test]
+fn timeout_serde() {
+    let timeout = CommandOutput::Timeout;
+    let json = serde_json::to_string(&timeout).unwrap();
+    assert!(json.contains("timeout"));
+
+    let deserialized: CommandOutput = serde_json::from_str(&json).unwrap();
+    assert!(matches!(deserialized, CommandOutput::Timeout));
+}

@@ -97,6 +97,12 @@ impl AgentRunnerBuilder for SimpleRunnerBuilder {
             .await
             .map_err(|_| anyhow::anyhow!("session {id} 不存在"))?;
 
+        // 历史数据补偿：孤儿 FunctionCall（无配对 FunctionResult）补发已取消的结果。
+        // 否则历史中残留无 ToolResult 配对的 ToolCall，下一次请求会被 LLM API 拒绝。
+        if let Err(e) = reconcile_orphan_function_calls(&*session).await {
+            tracing::warn!(session_id = id, error = %e, "reconcile orphan function calls failed");
+        }
+
         let sp = SessionProfile {
             name: session
                 .state()
@@ -272,15 +278,7 @@ impl AgentRunner for SimpleRunner {
         let llm_config =
             match crate::client::LlmConfig::from_settings(&self.settings, &*self.profile) {
                 Ok(c) => c,
-                Err(e) => {
-                    let (tx, rx) = mpsc::unbounded_channel();
-                    let _ = tx.send(Event::TurnStop {
-                        id: String::new(),
-                        stop_reason: StopReason::Error(e.to_string()),
-                        token_usage: None,
-                    });
-                    return Box::pin(ReceiverStream { rx });
-                }
+                Err(e) => return stop_stream(StopReason::Error(e.to_string())),
             };
 
         let model_max_tokens = llm_config.model_config.as_ref().map(|m| m.max_tokens);
@@ -317,15 +315,7 @@ impl AgentRunner for SimpleRunner {
                 )
                 .await
             }
-            Err(e) => {
-                let (tx, rx) = mpsc::unbounded_channel();
-                let _ = tx.send(Event::TurnStop {
-                    id: String::new(),
-                    stop_reason: StopReason::Error(e.to_string()),
-                    token_usage: None,
-                });
-                Box::pin(ReceiverStream { rx })
-            }
+            Err(e) => stop_stream(StopReason::Error(e.to_string())),
         }
     }
 
@@ -391,11 +381,7 @@ impl SimpleRunner {
 
         // 持久化 user message
         if let Err(e) = self.append_user_message(prompt).await {
-            let _ = tx.send(Event::TurnStop {
-                id: String::new(),
-                stop_reason: StopReason::Error(e.to_string()),
-                token_usage: None,
-            });
+            send_stop(&tx, StopReason::Error(e.to_string()));
             return Box::pin(ReceiverStream { rx });
         }
 
@@ -405,7 +391,7 @@ impl SimpleRunner {
             Some(instruction)
         };
         let temperature = self.profile.model_profile().temperature;
-        let max_turns: usize = 100;
+        let max_turns: usize = 200;
 
         let sid = self.id.clone();
         let svc = self.session_service.clone();
@@ -530,6 +516,17 @@ impl Stream for ReceiverStream {
     }
 }
 
+/// 构造一个仅发射单个终止事件（TurnStop）的流，用于提前中止场景。
+fn stop_stream(reason: StopReason) -> Pin<Box<dyn Stream<Item = Event> + Send>> {
+    let (tx, rx) = mpsc::unbounded_channel();
+    let _ = tx.send(Event::TurnStop {
+        id: String::new(),
+        stop_reason: reason,
+        token_usage: None,
+    });
+    Box::pin(ReceiverStream { rx })
+}
+
 // ── Tool loop ───────────────────────────────────────────────────────
 
 /// `run_tool_loop` 的参数聚合。
@@ -550,103 +547,29 @@ struct ToolLoopParams<M: CompletionModel + 'static> {
 
 /// 工具循环：从 session 读取事件 → 请求 LLM → 消费 stream → 执行 tool call → 重复。
 async fn run_tool_loop<M: CompletionModel + 'static>(params: ToolLoopParams<M>) {
-    fn send(event: Event, tx: &mpsc::UnboundedSender<Event>) {
-        let _ = tx.send(event);
-    }
-
-    async fn emit(
-        event: Event,
-        tx: &mpsc::UnboundedSender<Event>,
-        events: &dyn playpen_session::Events,
-    ) -> bool {
-        let kind = event_kind(&event);
-        let _ = tx.send(event.clone());
-
-        match events.append(&event).await {
-            Ok(_) => true,
-            Err(e) => {
-                tracing::error!(error = %e, kind, "persist failed, aborting loop");
-                send(
-                    Event::TurnStop {
-                        id: String::new(),
-                        stop_reason: StopReason::Error(format!("{kind} persist failed: {e}")),
-                        token_usage: None,
-                    },
-                    tx,
-                );
-                false
-            }
-        }
-    }
-
-    // 获取 session，用于后续所有 events().append_event 调用
+    // 获取 session，用于后续所有 events().append 调用
     let session = match params.svc.get(&params.sid).await {
         Ok(s) => s,
         Err(e) => {
-            send(
-                Event::TurnStop {
-                    id: String::new(),
-                    stop_reason: StopReason::Error(e.to_string()),
-                    token_usage: None,
-                },
-                &params.tx,
-            );
+            send_stop(&params.tx, StopReason::Error(e.to_string()));
             return;
         }
     };
 
     for _turn in 0..params.max_turns {
         if params.cancel.is_cancelled() {
-            send(
-                Event::TurnStop {
-                    id: String::new(),
-                    stop_reason: StopReason::Cancelled,
-                    token_usage: None,
-                },
-                &params.tx,
-            );
+            send_stop(&params.tx, StopReason::Cancelled);
             return;
         }
 
         // 从 session 按事件 asc 拼装 Message
-        let messages: Vec<Message> = match params.svc.get(&params.sid).await {
-            Ok(s) => {
-                s.events()
-                    .by_role(&[
-                        playpen_session::Role::User,
-                        playpen_session::Role::Model,
-                        playpen_session::Role::Function,
-                    ])
-                    .all()
-                    .await
-                    .pipe(events_to_chat_history)
-                    .collect()
-                    .await
-            }
+        let messages = match load_chat_messages(&*params.svc, &params.sid).await {
+            Ok(m) => m,
             Err(e) => {
-                send(
-                    Event::TurnStop {
-                        id: String::new(),
-                        stop_reason: StopReason::Error(e.to_string()),
-                        token_usage: None,
-                    },
-                    &params.tx,
-                );
+                send_stop(&params.tx, StopReason::Error(e));
                 return;
             }
         };
-
-        if messages.is_empty() {
-            send(
-                Event::TurnStop {
-                    id: String::new(),
-                    stop_reason: StopReason::Error("no messages to send".into()),
-                    token_usage: None,
-                },
-                &params.tx,
-            );
-            return;
-        }
 
         let request = CompletionRequest {
             model: None,
@@ -659,88 +582,45 @@ async fn run_tool_loop<M: CompletionModel + 'static>(params: ToolLoopParams<M>) 
             tool_choice: None,
             additional_params: params.additional_params.clone(),
             output_schema: None,
+            record_telemetry_content: false,
         };
 
         match params.model.stream(request).await {
             Ok(stream) => {
-                // (id, call_id, name, args) — id 来自 FunctionCall 的 event_id
-                let mut pending_calls: Vec<(String, String, String, serde_json::Value)> =
-                    Vec::new();
-                // 当前 turn 产出的事件类型（位标志）
-                let mut turn_bits: u8 = 0;
-
                 // stream in, stream out — 惰性迭代
-                let mut event_stream = Box::pin(crate::convert::process_stream(
+                let event_stream = Box::pin(crate::convert::process_stream(
                     stream,
                     params.extract_finish_reason,
                 ));
 
-                // 消费 event stream
-                loop {
-                    // 检查 cancel：取消则 drop stream 终止 LLM 请求
-                    if params.cancel.is_cancelled() {
-                        drop(event_stream);
-                        send(
-                            Event::TurnStop {
-                                id: String::new(),
-                                stop_reason: StopReason::Cancelled,
-                                token_usage: None,
-                            },
-                            &params.tx,
-                        );
-                        return;
-                    }
-
-                    let event = match event_stream.as_mut().next().await {
-                        Some(event) => event,
-                        None => break,
-                    };
-
-                    match &event {
-                        // delta 事件：仅发射（UI），不持久化
-                        Event::ModelMessageDelta { .. } | Event::ModelThoughtDelta { .. } => {
-                            send(event.clone(), &params.tx);
+                let (pending_calls, turn_bits) =
+                    match consume_turn_stream(
+                        event_stream,
+                        &params.tx,
+                        session.events(),
+                        &params.cancel,
+                    )
+                    .await
+                    {
+                        ConsumeOutcome::Done { pending_calls, turn_bits } => {
+                            (pending_calls, turn_bits)
                         }
-                        // TurnStop：有 tool_call 时跳过持久化
-                        Event::TurnStop { .. } if !pending_calls.is_empty() => {
-                            send(event.clone(), &params.tx);
-                        }
-                        // 其余最终事件（含 FunctionCall / TurnStop）：发射 + 持久化
-                        _ => {
-                            if !emit(event.clone(), &params.tx, session.events()).await {
+                        ConsumeOutcome::Cancelled { pending_calls } => {
+                            // 已持久化的 FunctionCall 必须补发 FunctionResult，
+                            // 否则 session 历史残留孤儿 tool_call（无配对结果），
+                            // 下一次构建请求会被 LLM API 拒绝。
+                            if !emit_cancelled_results(&pending_calls, &params.tx, session.events())
+                                .await
+                            {
+                                // emit_cancelled_results 已发 TurnStop::Error
                                 return;
                             }
+                            send_stop(&params.tx, StopReason::Cancelled);
+                            return;
                         }
-                    }
+                        ConsumeOutcome::PersistFailed => return,
+                    };
 
-                    // 记录当前 turn 产出的非 delta 事件类型
-                    match &event {
-                        Event::ModelThought { .. } => {
-                            turn_bits |= MODEL_ACTION_THOUGHT;
-                        }
-                        Event::ModelMessage { .. } => {
-                            turn_bits |= MODEL_ACTION_MESSAGE;
-                        }
-                        Event::FunctionCall { .. } => {
-                            turn_bits |= MODEL_ACTION_CALL;
-                        }
-                        _ => {}
-                    }
-
-                    if let Event::FunctionCall {
-                        id,
-                        call_id,
-                        name,
-                        args,
-                        ..
-                    } = event
-                    {
-                        pending_calls.push((id, call_id, name, args));
-                    }
-                }
-
-                // pending_calls 非空时继续执行工具。
-                // 空的 TurnStop 已被跳过持久化，UI 侧仍会收到通知。
                 // 位判断：只有 thought 时重试（LLM 抽风防护）
                 if turn_bits & (MODEL_ACTION_MESSAGE | MODEL_ACTION_CALL) == 0 {
                     if turn_bits & MODEL_ACTION_THOUGHT != 0 {
@@ -754,88 +634,23 @@ async fn run_tool_loop<M: CompletionModel + 'static>(params: ToolLoopParams<M>) 
                 }
 
                 // 有 tool_call → 执行 tool，持久化 FunctionResult
-                for (id, call_id, name, args) in &pending_calls {
-                    match params.tools.iter().find(|t| t.name() == name) {
-                        Some(tool) => {
-                            let ctx = crate::tool::ToolContext::new(
-                                id.clone(),
-                                call_id.clone(),
-                                name.clone(),
-                                params.tx.clone(),
-                                params.cancel.clone(),
-                            );
-
-                            match tool.execute(ctx, args.clone()).await {
-                                Ok(blocks) => {
-                                    if !emit(
-                                        Event::FunctionResult {
-                                            id: id.clone(),
-                                            call_id: call_id.clone(),
-                                            name: name.clone(),
-                                            content: Some(blocks),
-                                            code: None,
-                                        },
-                                        &params.tx,
-                                        session.events(),
-                                    )
-                                    .await
-                                    {
-                                        return;
-                                    }
-                                }
-                                Err(e) => {
-                                    if !emit(
-                                        Event::FunctionResult {
-                                            id: id.clone(),
-                                            call_id: call_id.clone(),
-                                            name: name.clone(),
-                                            content: Some(vec![ContentBlock::text(format!(
-                                                "tool error: {e}"
-                                            ))]),
-                                            code: Some(-1),
-                                        },
-                                        &params.tx,
-                                        session.events(),
-                                    )
-                                    .await
-                                    {
-                                        return;
-                                    }
-                                }
-                            }
-                        }
-                        None => {
-                            if !emit(
-                                Event::FunctionResult {
-                                    id: id.clone(),
-                                    call_id: call_id.clone(),
-                                    name: name.clone(),
-                                    content: Some(vec![ContentBlock::text(format!(
-                                        "无效的工具: {name}"
-                                    ))]),
-                                    code: Some(-1),
-                                },
-                                &params.tx,
-                                session.events(),
-                            )
-                            .await
-                            {
-                                tracing::warn!(name, "emit FunctionResult 失败，跳过");
-                            }
-                        }
+                for call in &pending_calls {
+                    if !execute_tool_call(
+                        &params.tools,
+                        call,
+                        &params.tx,
+                        session.events(),
+                        &params.cancel,
+                    )
+                    .await
+                    {
+                        return;
                     }
                 }
                 // 继续下一轮循环
             }
             Err(e) => {
-                send(
-                    Event::TurnStop {
-                        id: String::new(),
-                        stop_reason: StopReason::Error(e.to_string()),
-                        token_usage: None,
-                    },
-                    &params.tx,
-                );
+                send_stop(&params.tx, StopReason::Error(e.to_string()));
                 return;
             }
         }
@@ -852,6 +667,312 @@ async fn run_tool_loop<M: CompletionModel + 'static>(params: ToolLoopParams<M>) 
         session.events(),
     )
     .await;
+}
+
+// ── Tool loop helpers ───────────────────────────────────────────────
+
+/// 一次模型输出中收集到的待执行工具调用。
+#[derive(Debug)]
+struct PendingCall {
+    id: String,
+    call_id: String,
+    name: String,
+    args: serde_json::Value,
+}
+
+/// 单轮 stream 消费的结果。
+#[derive(Debug)]
+enum ConsumeOutcome {
+    /// 正常消费完，附带待执行调用与本轮产出的事件类型位标志。
+    Done { pending_calls: Vec<PendingCall>, turn_bits: u8 },
+    /// 用户取消：流已 drop。携带已持久化的待执行调用，
+    /// 调用方必须为它们补发 FunctionResult，否则 session 历史残留孤儿
+    /// tool_call，下一次请求会被 LLM API 拒绝（整个 session 作废）。
+    Cancelled { pending_calls: Vec<PendingCall> },
+    /// 持久化失败：已发送 `TurnStop::Error`，调用方应直接终止。
+    PersistFailed,
+}
+
+/// 发送终止事件到 tx。
+fn send_stop(tx: &mpsc::UnboundedSender<Event>, reason: StopReason) {
+    let _ = tx.send(Event::TurnStop {
+        id: String::new(),
+        stop_reason: reason,
+        token_usage: None,
+    });
+}
+
+/// 发射事件到 tx 并持久化到 session；持久化失败时发送 `TurnStop::Error` 并返回 false。
+async fn emit(
+    event: Event,
+    tx: &mpsc::UnboundedSender<Event>,
+    events: &dyn playpen_session::Events,
+) -> bool {
+    let kind = event_kind(&event);
+    let _ = tx.send(event.clone());
+
+    match events.append(&event).await {
+        Ok(_) => true,
+        Err(e) => {
+            tracing::error!(error = %e, kind, "persist failed, aborting loop");
+            send_stop(tx, StopReason::Error(format!("{kind} persist failed: {e}")));
+            false
+        }
+    }
+}
+
+/// 从 session 按角色过滤拼装 Message。
+/// Err 携带无法继续的原因（session 获取失败 / 无消息）。
+async fn load_chat_messages(
+    svc: &dyn SessionService,
+    sid: &str,
+) -> Result<Vec<Message>, String> {
+    let s = svc.get(sid).await.map_err(|e| e.to_string())?;
+    let events: Vec<Event> = s
+        .events()
+        .by_role(&[
+            playpen_session::Role::User,
+            playpen_session::Role::Model,
+            playpen_session::Role::Function,
+        ])
+        .all()
+        .await
+        .collect()
+        .await;
+
+    // 兜底：丢弃无对应 FunctionResult 的孤儿 FunctionCall。
+    // 否则转换层会产出无 ToolResult 配对的 ToolCall，LLM API 直接拒绝请求。
+    // （正常路径下 cancel 会补发 cancelled 的 FunctionResult，此处仅防御异常/历史数据）
+    let resulted_call_ids: std::collections::HashSet<String> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::FunctionResult { call_id, .. } => Some(call_id.clone()),
+            _ => None,
+        })
+        .collect();
+
+    let messages: Vec<Message> = futures::stream::iter(events.into_iter().filter(|e| match e {
+        Event::FunctionCall { call_id, .. } => resulted_call_ids.contains(call_id),
+        _ => true,
+    }))
+    .pipe(events_to_chat_history)
+    .collect()
+    .await;
+
+    if messages.is_empty() {
+        return Err("no messages to send".into());
+    }
+    Ok(messages)
+}
+
+/// 消费单轮 LLM 输出流：delta 仅发射，最终事件发射 + 持久化，收集待执行调用。
+///
+/// delta 事件（`ModelMessageDelta` / `ModelThoughtDelta`）与带 tool_call 的
+/// `TurnStop` 仅发射不持久化；其余最终事件发射 + 持久化。
+async fn consume_turn_stream(
+    mut event_stream: Pin<Box<dyn Stream<Item = Event> + Send>>,
+    tx: &mpsc::UnboundedSender<Event>,
+    events: &dyn playpen_session::Events,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> ConsumeOutcome {
+    let mut pending_calls: Vec<PendingCall> = Vec::new();
+    let mut turn_bits: u8 = 0;
+
+    loop {
+        // 取消则 drop stream 终止 LLM 请求
+        if cancel.is_cancelled() {
+            drop(event_stream);
+            return ConsumeOutcome::Cancelled { pending_calls };
+        }
+
+        let event = match event_stream.as_mut().next().await {
+            Some(event) => event,
+            None => break,
+        };
+
+        match &event {
+            // delta 事件：仅发射（UI），不持久化
+            Event::ModelMessageDelta { .. } | Event::ModelThoughtDelta { .. } => {
+                let _ = tx.send(event.clone());
+            }
+            // TurnStop：有 tool_call 时跳过持久化
+            Event::TurnStop { .. } if !pending_calls.is_empty() => {
+                let _ = tx.send(event.clone());
+            }
+            // ModelThought / ModelMessage / FunctionCall：记录本轮产出类型 + 发射 + 持久化
+            Event::ModelThought { .. } => {
+                turn_bits |= MODEL_ACTION_THOUGHT;
+                if !emit(event.clone(), tx, events).await {
+                    return ConsumeOutcome::PersistFailed;
+                }
+            }
+            Event::ModelMessage { .. } => {
+                turn_bits |= MODEL_ACTION_MESSAGE;
+                if !emit(event.clone(), tx, events).await {
+                    return ConsumeOutcome::PersistFailed;
+                }
+            }
+            Event::FunctionCall { .. } => {
+                turn_bits |= MODEL_ACTION_CALL;
+                if !emit(event.clone(), tx, events).await {
+                    return ConsumeOutcome::PersistFailed;
+                }
+            }
+            // 其余最终事件（含无 tool_call 的 TurnStop）：发射 + 持久化
+            _ => {
+                if !emit(event.clone(), tx, events).await {
+                    return ConsumeOutcome::PersistFailed;
+                }
+            }
+        }
+
+        if let Event::FunctionCall {
+            id,
+            call_id,
+            name,
+            args,
+            ..
+        } = event
+        {
+            pending_calls.push(PendingCall { id, call_id, name, args });
+        }
+    }
+
+    ConsumeOutcome::Done { pending_calls, turn_bits }
+}
+
+/// 构造并持久化 FunctionResult。返回 false 表示持久化失败（已发 `TurnStop::Error`）。
+async fn emit_result(
+    call: &PendingCall,
+    content: Vec<ContentBlock>,
+    code: Option<i32>,
+    tx: &mpsc::UnboundedSender<Event>,
+    events: &dyn playpen_session::Events,
+) -> bool {
+    emit(
+        Event::FunctionResult {
+            id: call.id.clone(),
+            call_id: call.call_id.clone(),
+            name: call.name.clone(),
+            content: Some(content),
+            code,
+        },
+        tx,
+        events,
+    )
+    .await
+}
+
+/// 补偿历史数据：为 session 中无配对 FunctionResult 的孤儿 FunctionCall
+/// 补发已取消的结果（与 cancel 路径的 `emit_cancelled_results` 一致）。
+/// 幂等：已有配对的不重复补。返回补发的数量。
+pub(crate) async fn reconcile_orphan_function_calls(
+    session: &dyn Session,
+) -> anyhow::Result<usize> {
+    let events: Vec<Event> = session.events().all().await.collect().await;
+
+    let resulted_call_ids: std::collections::HashSet<&str> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::FunctionResult { call_id, .. } => Some(call_id.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    let mut repaired = 0usize;
+    for e in &events {
+        let Event::FunctionCall { id, call_id, name, .. } = e else {
+            continue;
+        };
+        if resulted_call_ids.contains(call_id.as_str()) {
+            continue;
+        }
+        session
+            .events()
+            .append(&Event::FunctionResult {
+                id: id.clone(),
+                call_id: call_id.clone(),
+                name: name.clone(),
+                content: Some(vec![ContentBlock::text("工具调用已取消")]),
+                code: None,
+            })
+            .await?;
+        repaired += 1;
+    }
+    Ok(repaired)
+}
+
+/// 为已持久化的待执行调用补发 cancelled 的 FunctionResult。
+/// 返回 false 表示持久化失败（已发 `TurnStop::Error`），调用方应终止。
+async fn emit_cancelled_results(
+    calls: &[PendingCall],
+    tx: &mpsc::UnboundedSender<Event>,
+    events: &dyn playpen_session::Events,
+) -> bool {
+    for call in calls {
+        if !emit_result(
+            call,
+            vec![ContentBlock::text("工具调用已取消")],
+            None,
+            tx,
+            events,
+        )
+        .await
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// 执行单个待调用工具并持久化 FunctionResult。
+/// 返回 false 表示持久化失败（已发 `TurnStop::Error`），调用方应终止；
+/// 无效工具的结果持久化失败仅 warn（与原行为一致）。
+async fn execute_tool_call(
+    tools: &[Arc<dyn Tool>],
+    call: &PendingCall,
+    tx: &mpsc::UnboundedSender<Event>,
+    events: &dyn playpen_session::Events,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> bool {
+    match tools.iter().find(|t| t.name() == call.name) {
+        Some(tool) => {
+            let ctx = crate::tool::ToolContext::new(
+                call.id.clone(),
+                call.call_id.clone(),
+                call.name.clone(),
+                tx.clone(),
+                cancel.clone(),
+            );
+            match tool.execute(ctx, call.args.clone()).await {
+                Ok(blocks) => emit_result(call, blocks, None, tx, events).await,
+                Err(e) => {
+                    emit_result(
+                        call,
+                        vec![ContentBlock::text(format!("tool error: {e}"))],
+                        Some(-1),
+                        tx,
+                        events,
+                    )
+                    .await
+                }
+            }
+        }
+        None => {
+            let ok = emit_result(
+                call,
+                vec![ContentBlock::text(format!("无效的工具: {}", call.name))],
+                Some(-1),
+                tx,
+                events,
+            )
+            .await;
+            if !ok {
+                tracing::warn!(name = %call.name, "emit FunctionResult 失败，跳过");
+            }
+            true
+        }
+    }
 }
 
 // ── helpers ─────────────────────────────────────────────────────────

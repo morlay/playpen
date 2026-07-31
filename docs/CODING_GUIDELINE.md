@@ -7,6 +7,7 @@
 - 单元测试用独立文件 `{name}_test.rs`，通过 `#[path]` 声明，不与实现文件混在一起。
 - 集成测试放 `tests/` 目录。
 - 先保证工具可测（文件系统 mock、HTTP mock），再测全流程。
+- 测试用 `AgentProfile` 实现须持有 `ModelProfile` 字段：`with_model_profile` 返回拥有型 `Box<dyn AgentProfile>` 且 trait 对象不可 clone，无字段单例会被迫引入委托包装类型复制整个接口；多字段实现可配合 `#[derive(Clone)]` 用 `..self.clone()` 重建（见 `playpen-agent/src/testing/mod.rs` 的 `TestProfile`）。
 
 ### 序列化
 
@@ -34,6 +35,7 @@
 - **内部传播，入口打印**：中间层使用 `anyhow::Result` 或自定义 enum 向上传播，不在中间层 `eprintln!`。仅在 CLI 入口（`main.rs`）或 ACP handler 顶层打印 / 返回错误。
 - **通知失败须 warn**：`cx.send_notification` 等非关键路径失败时用 `tracing::warn!` 记录，不得静默。
 - **不在库 crate 中使用 `eprintln!`**：库代码使用 `tracing`，由入口统一配置输出。
+- **提前终止统一构造终止流**：runner 的提前中止路径（配置错误、模型构建失败、取消）统一使用 `stop_stream(StopReason)` 返回单事件流，禁止各处手写「建 channel + send TurnStop + 返回 ReceiverStream」。
 
 ## 常用命令
 

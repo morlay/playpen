@@ -39,6 +39,7 @@ impl Tool for BashTool {
         let mut stderr_buf = String::new();
         let mut exit_code: Option<i32> = None;
         let mut cancelled = false;
+        let mut timed_out = false;
 
         while let Some(item) = rx.recv().await {
             if ctx.cancellation_token().is_cancelled() {
@@ -72,6 +73,10 @@ impl Tool for BashTool {
                     cancelled = true;
                     break;
                 }
+                CommandOutput::Timeout => {
+                    timed_out = true;
+                    break;
+                }
                 CommandOutput::SpawnFailed { message } => {
                     anyhow::bail!("命令启动失败: {message}");
                 }
@@ -103,6 +108,8 @@ impl Tool for BashTool {
 
         if cancelled {
             blocks.push(ContentBlock::text("命令执行已被取消"));
+        } else if timed_out {
+            blocks.push(ContentBlock::text("命令执行超时"));
         } else if blocks.is_empty() {
             blocks.push(ContentBlock::text("命令执行成功（无输出）"));
         }

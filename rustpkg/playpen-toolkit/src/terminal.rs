@@ -18,6 +18,8 @@ pub enum CommandOutput {
     },
     #[serde(rename = "cancelled")]
     Cancelled,
+    #[serde(rename = "timeout")]
+    Timeout,
     #[serde(rename = "spawn_failed")]
     SpawnFailed {
         message: String,

@@ -152,6 +152,58 @@ async fn test_events_to_chat_history_merges_assistant() {
     }
 }
 
+#[tokio::test]
+async fn test_orphan_function_result_dropped() {
+    let events = vec![
+        Event::FunctionCall {
+            id: String::new(),
+            call_id: "c1".into(),
+            name: "read".into(),
+            args: serde_json::json!({"path": "main.rs"}),
+        },
+        Event::FunctionResult {
+            id: String::new(),
+            call_id: "c1".into(),
+            name: "read".into(),
+            content: Some(vec![ContentBlock::text("ok")]),
+            code: Some(0),
+        },
+        // 孤儿：有 call_id 但无对应的 FunctionCall，应被丢弃
+        Event::FunctionResult {
+            id: String::new(),
+            call_id: "orphan".into(),
+            name: "read".into(),
+            content: Some(vec![ContentBlock::text("stray")]),
+            code: Some(0),
+        },
+        Event::TurnStop {
+            id: String::new(),
+            stop_reason: StopReason::EndTurn,
+            token_usage: None,
+        },
+    ];
+
+    let msgs: Vec<Message> = futures::stream::iter(events)
+        .pipe(events_to_chat_history)
+        .collect()
+        .await;
+
+    // Assistant(ToolCall c1) + User(ToolResult c1)，孤儿 result 不产生消息
+    assert_eq!(msgs.len(), 2, "孤儿 FunctionResult 不应产生消息");
+
+    let tool_result_ids: Vec<String> = msgs
+        .iter()
+        .filter_map(|m| match m {
+            Message::User { content } => content.iter().find_map(|c| match c {
+                UserContent::ToolResult(tr) => Some(tr.id.clone()),
+                _ => None,
+            }),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tool_result_ids, vec!["c1".to_string()], "仅配对的 ToolResult 应传给 LLM");
+}
+
 #[test]
 fn test_empty_content_skipped() {
     let event = Event::UserMessage {

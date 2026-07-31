@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command as TokioCommand;
 use tokio::select;
+use tokio::time::{Duration, sleep};
 
 use crate::terminal::{Command, CommandOutput, Terminal};
 
@@ -98,28 +99,60 @@ impl Terminal for NativeTerminal {
                 }
             });
 
-            // 先等所有输出 drain 完，再发退出信号
-            let _ = stdout_task.await;
-            let _ = stderr_task.await;
-
             let exit_code = |status: std::process::ExitStatus| status.code().unwrap_or(-1);
 
-            if let Some(token) = cancel_token {
-                select! {
-                    status = child.wait() => {
-                        let code = status.map(&exit_code).unwrap_or(-1);
-                        let _ = tx.send(CommandOutput::Exited { code });
-                    }
-                    _ = token.cancelled() => {
-                        let _ = child.start_kill();
-                        let _ = child.wait().await;
-                        let _ = tx.send(CommandOutput::Cancelled);
-                    }
+            /// 进程终止原因：自然退出 / 取消 / 超时
+            enum Term {
+                Exited(std::io::Result<std::process::ExitStatus>),
+                Cancelled,
+                TimedOut,
+            }
+
+            // 等待进程结束、取消或超时。取消/超时必须立即响应：不能在等待输出
+            // drain 之后再检查，否则无输出的长驻命令（如 sleep）会让终止永远
+            // 无法生效，导致调用方（bash tool → tool loop）阻塞直到进程自然退出。
+            let timeout = cmd.timeout_ms.map(Duration::from_millis);
+            let term = match (&cancel_token, timeout) {
+                (Some(token), Some(t)) => select! {
+                    status = child.wait() => Term::Exited(status),
+                    _ = token.cancelled() => Term::Cancelled,
+                    _ = sleep(t) => Term::TimedOut,
+                },
+                (Some(token), None) => select! {
+                    status = child.wait() => Term::Exited(status),
+                    _ = token.cancelled() => Term::Cancelled,
+                },
+                (None, Some(t)) => select! {
+                    status = child.wait() => Term::Exited(status),
+                    _ = sleep(t) => Term::TimedOut,
+                },
+                (None, None) => Term::Exited(child.wait().await),
+            };
+
+            // 非正常终止（取消/超时）对应的终态事件
+            let forced = match &term {
+                Term::Cancelled => Some(CommandOutput::Cancelled),
+                Term::TimedOut => Some(CommandOutput::Timeout),
+                _ => None,
+            };
+
+            match term {
+                Term::Exited(status) => {
+                    // 进程自然退出：先等输出读完再发 Exited，保证输出顺序
+                    let _ = stdout_task.await;
+                    let _ = stderr_task.await;
+                    let code = status.map(&exit_code).unwrap_or(-1);
+                    let _ = tx.send(CommandOutput::Exited { code });
                 }
-            } else {
-                let status = child.wait().await;
-                let code = status.map(&exit_code).unwrap_or(-1);
-                let _ = tx.send(CommandOutput::Exited { code });
+                // 取消/超时：子进程可能仍在运行，kill 后管道 EOF，读取任务会很快
+                // 结束；等它们收尾保证终止前的输出先于终态事件送达
+                Term::Cancelled | Term::TimedOut => {
+                    let _ = child.start_kill();
+                    let _ = child.wait().await;
+                    let _ = stdout_task.await;
+                    let _ = stderr_task.await;
+                    let _ = tx.send(forced.expect("非正常终止必有终态事件"));
+                }
             }
         });
 

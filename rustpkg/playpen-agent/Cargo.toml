@@ -21,7 +21,7 @@ chrono = { workspace = true }
 tokio = { workspace = true }
 tokio-util = "0.7"
 futures = "0.3"
-rig-core = { version = "0.39", features = ["test-utils"] }
+rig-core = { version = "0.41", features = ["test-utils"] }
 schemars = { version = "1", features = ["derive"] }
 
 [dev-dependencies]

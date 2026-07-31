@@ -132,7 +132,7 @@ async fn test_builder_create_and_resume() {
             &self,
             _: &playpen_config::Dirs,
         ) -> anyhow::Result<Vec<Box<dyn playpen_profile::AgentProfile>>> {
-            Ok(vec![Box::new(TestProfile)])
+            Ok(vec![Box::new(TestProfile::default())])
         }
     }
 
@@ -143,7 +143,7 @@ async fn test_builder_create_and_resume() {
         Arc::new(TestResolver),
     );
 
-    let runner = builder.create(Box::new(TestProfile)).await.unwrap();
+    let runner = builder.create(Box::new(TestProfile::default())).await.unwrap();
     let sid = runner.id().to_string();
     assert!(!sid.is_empty());
     assert_eq!(runner.profile().name(), "test");
@@ -176,7 +176,7 @@ async fn test_runner_with_profile() {
     let session = svc.create().await.unwrap();
     let runner = make_runner(session, svc.clone()).await;
 
-    let new_profile = Box::new(TestProfile);
+    let new_profile = Box::new(TestProfile::default());
     let updated = runner.with_profile(new_profile);
     assert_eq!(updated.profile().name(), "test");
 }
@@ -195,7 +195,7 @@ async fn test_profile_state_persisted_on_create() {
         Arc::new(resolver),
     );
 
-    let runner = builder.create(Box::new(TestProfile)).await.unwrap();
+    let runner = builder.create(Box::new(TestProfile::default())).await.unwrap();
     let sid = runner.id().to_string();
 
     use futures::StreamExt;
@@ -588,4 +588,426 @@ async fn test_only_thought_retries() {
         .count();
     assert_eq!(thought_count, 1, "应持久化 1 条 ModelThought");
     assert_eq!(message_count, 1, "应持久化 1 条 ModelMessage");
+}
+
+// ── cancel 后孤儿 FunctionCall 修复 ──
+
+#[tokio::test]
+async fn test_cancel_after_function_call_emits_cancelled_result() {
+    use std::pin::Pin;
+    use std::time::Duration;
+    use tokio::sync::mpsc;
+    use tokio_util::sync::CancellationToken;
+
+    let svc = new_db().await;
+    let session = svc.create().await.unwrap();
+    let sid = session.id().to_string();
+
+    // 事件源：可控 channel，模拟 LLM 流在 FunctionCall 产出后暂停
+    let (tx_events, rx_events) = mpsc::unbounded_channel();
+    let (tx_out, _rx_out) = mpsc::unbounded_channel();
+    let cancel = CancellationToken::new();
+
+    let stream: Pin<Box<dyn futures::Stream<Item = Event> + Send>> =
+        Box::pin(crate::runner::ReceiverStream { rx: rx_events });
+    let tx_out_for_task = tx_out.clone();
+    let cancel_for_task = cancel.clone();
+    let svc_for_task = svc.clone();
+    let sid_for_task = sid.clone();
+
+    let handle = tokio::spawn(async move {
+        let session = svc_for_task.get(&sid_for_task).await.unwrap();
+        crate::runner::consume_turn_stream(stream, &tx_out_for_task, session.events(), &cancel_for_task)
+            .await
+    });
+
+    // 1. 发送 FunctionCall，等待其持久化到 session（此时工具尚未执行）
+    tx_events
+        .send(Event::FunctionCall {
+            id: String::new(),
+            call_id: "call_1".into(),
+            name: "test_tool".into(),
+            args: serde_json::json!({}),
+        })
+        .unwrap();
+
+    let mut persisted = false;
+    for _ in 0..200 {
+        if svc.get(&sid).await.unwrap().events().len().await >= 1 {
+            persisted = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(persisted, "FunctionCall 应已持久化");
+
+    // 2. 哨兵事件（仅发 UI 不持久化）驱动循环回到顶部检查 cancel
+    tx_events
+        .send(Event::ModelThoughtDelta {
+            id: "sentinel_1".into(),
+            text: "sentinel".into(),
+        })
+        .unwrap();
+    // 3. 先 cancel，再发第二个哨兵确保循环顶部检查到取消状态
+    cancel.cancel();
+    tx_events
+        .send(Event::ModelThoughtDelta {
+            id: "sentinel_2".into(),
+            text: "sentinel".into(),
+        })
+        .unwrap();
+
+    let pending_calls = match handle.await.unwrap() {
+        crate::runner::ConsumeOutcome::Cancelled { pending_calls } => pending_calls,
+        other => panic!("期望 Cancelled，实际 {other:?}"),
+    };
+    assert_eq!(pending_calls.len(), 1, "应携带已持久化的 FunctionCall");
+    assert_eq!(pending_calls[0].call_id, "call_1");
+
+    // 4. 补发 cancelled 的 FunctionResult（run_tool_loop 的 Cancelled 分支逻辑）
+    let ok =
+        crate::runner::emit_cancelled_results(&pending_calls, &tx_out, session.events()).await;
+    assert!(ok, "补发 cancelled 结果应成功");
+
+    // 5. session 中 FunctionCall 必须有配对 FunctionResult，且 content 标记取消
+    let session_events: Vec<Event> = svc
+        .get(&sid)
+        .await
+        .unwrap()
+        .events()
+        .all()
+        .await
+        .collect()
+        .await;
+    let call_count = session_events
+        .iter()
+        .filter(|e| matches!(e, Event::FunctionCall { .. }))
+        .count();
+    let result_count = session_events
+        .iter()
+        .filter(|e| matches!(e, Event::FunctionResult { .. }))
+        .count();
+    assert_eq!((call_count, result_count), (1, 1), "FunctionCall 与 FunctionResult 应配对");
+
+    // 6. 验证转换后的消息序列合法：每个 ToolCall 都有配对 ToolResult
+    use crate::convert::StreamPipe;
+    let messages: Vec<rig_core::completion::Message> = futures::stream::iter(session_events)
+        .pipe(crate::convert::events_to_chat_history)
+        .collect()
+        .await;
+    let has_tool_call = messages.iter().any(|m| match m {
+        rig_core::completion::Message::Assistant { content, .. } => content
+            .iter()
+            .any(|c| matches!(c, rig_core::completion::message::AssistantContent::ToolCall(_))),
+        _ => false,
+    });
+    let has_tool_result = messages.iter().any(|m| match m {
+        rig_core::completion::Message::User { content } => content
+            .iter()
+            .any(|c| matches!(c, rig_core::completion::message::UserContent::ToolResult(_))),
+        _ => false,
+    });
+    assert!(has_tool_call, "应保留配对的 ToolCall");
+    assert!(has_tool_result, "应有对应的 ToolResult");
+}
+
+#[tokio::test]
+async fn test_load_chat_messages_filters_orphan_function_calls() {
+    let svc = new_db().await;
+    let session = svc.create().await.unwrap();
+    let sid = session.id().to_string();
+
+    // 模拟已损坏的 session：FunctionCall 被持久化但没有 FunctionResult
+    session
+        .events()
+        .append(&Event::UserMessage {
+            id: String::new(),
+            content: vec![ContentBlock::text("hi")],
+        })
+        .await
+        .unwrap();
+    session
+        .events()
+        .append(&Event::FunctionCall {
+            id: String::new(),
+            call_id: "orphan_1".into(),
+            name: "test_tool".into(),
+            args: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+    session
+        .events()
+        .append(&Event::ModelMessage {
+            id: String::new(),
+            content: vec![ContentBlock::text("I will use a tool")],
+        })
+        .await
+        .unwrap();
+
+    let messages = crate::runner::load_chat_messages(&*svc, &sid).await.unwrap();
+
+    // 孤儿 FunctionCall 不应生成 ToolCall（否则 LLM API 拒绝请求）
+    let has_tool_call = messages.iter().any(|m| match m {
+        rig_core::completion::Message::Assistant { content, .. } => content
+            .iter()
+            .any(|c| matches!(c, rig_core::completion::message::AssistantContent::ToolCall(_))),
+        _ => false,
+    });
+    assert!(!has_tool_call, "孤儿 FunctionCall 不应生成 ToolCall");
+
+    // 配对的文本内容仍应保留
+    let has_text = messages.iter().any(|m| match m {
+        rig_core::completion::Message::Assistant { content, .. } => content
+            .iter()
+            .any(|c| matches!(c, rig_core::completion::message::AssistantContent::Text(_))),
+        _ => false,
+    });
+    assert!(has_text, "ModelMessage 文本应保留");
+}
+
+#[tokio::test]
+async fn test_load_chat_messages_keeps_paired_function_calls() {
+    let svc = new_db().await;
+    let session = svc.create().await.unwrap();
+    let sid = session.id().to_string();
+
+    // 配对完整的 FunctionCall + FunctionResult 不应被过滤
+    session
+        .events()
+        .append(&Event::UserMessage {
+            id: String::new(),
+            content: vec![ContentBlock::text("run tool")],
+        })
+        .await
+        .unwrap();
+    session
+        .events()
+        .append(&Event::FunctionCall {
+            id: String::new(),
+            call_id: "paired_1".into(),
+            name: "test_tool".into(),
+            args: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+    session
+        .events()
+        .append(&Event::FunctionResult {
+            id: String::new(),
+            call_id: "paired_1".into(),
+            name: "test_tool".into(),
+            content: Some(vec![ContentBlock::text("ok")]),
+            code: Some(0),
+        })
+        .await
+        .unwrap();
+
+    let messages = crate::runner::load_chat_messages(&*svc, &sid).await.unwrap();
+
+    let has_tool_call = messages.iter().any(|m| match m {
+        rig_core::completion::Message::Assistant { content, .. } => content
+            .iter()
+            .any(|c| matches!(c, rig_core::completion::message::AssistantContent::ToolCall(_))),
+        _ => false,
+    });
+    let has_tool_result = messages.iter().any(|m| match m {
+        rig_core::completion::Message::User { content } => content
+            .iter()
+            .any(|c| matches!(c, rig_core::completion::message::UserContent::ToolResult(_))),
+        _ => false,
+    });
+    assert!(has_tool_call, "配对的 ToolCall 应保留");
+    assert!(has_tool_result, "配对的 ToolResult 应保留");
+}
+
+// ── 历史数据补偿 ──
+
+#[tokio::test]
+async fn test_reconcile_orphan_function_calls_repairs_and_idempotent() {
+    let svc = new_db().await;
+    let session = svc.create().await.unwrap();
+
+    // 孤儿：有 FunctionCall 无 FunctionResult
+    session
+        .events()
+        .append(&Event::UserMessage {
+            id: String::new(),
+            content: vec![ContentBlock::text("run tool")],
+        })
+        .await
+        .unwrap();
+    session
+        .events()
+        .append(&Event::FunctionCall {
+            id: "fc_1".into(),
+            call_id: "orphan_1".into(),
+            name: "test_tool".into(),
+            args: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+
+    // 首次补偿：补发 1 条 FunctionResult
+    let repaired = crate::runner::reconcile_orphan_function_calls(&*session)
+        .await
+        .unwrap();
+    assert_eq!(repaired, 1, "应补发 1 条 FunctionResult");
+
+    let events: Vec<Event> = session.events().all().await.collect().await;
+    let results: Vec<&Event> = events
+        .iter()
+        .filter(|e| matches!(e, Event::FunctionResult { .. }))
+        .collect();
+    assert_eq!(results.len(), 1, "session 中应有 1 条 FunctionResult");
+    match results[0] {
+        Event::FunctionResult {
+            call_id,
+            name,
+            content,
+            code,
+            ..
+        } => {
+            assert_eq!(call_id, "orphan_1", "FunctionResult 应配对孤儿 FunctionCall");
+            assert_eq!(name, "test_tool");
+            assert!(code.is_none(), "取消结果不应有 exit_code");
+            let text: String = content
+                .as_ref()
+                .map(|blocks| {
+                    blocks
+                        .iter()
+                        .filter_map(|b| match b {
+                            ContentBlock::Text(t) => Some(t.text.clone()),
+                            _ => None,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            assert_eq!(text, "工具调用已取消");
+        }
+        _ => panic!("期望 FunctionResult"),
+    }
+
+    // 幂等：再次补偿不重复补发
+    let repaired_again = crate::runner::reconcile_orphan_function_calls(&*session)
+        .await
+        .unwrap();
+    assert_eq!(repaired_again, 0, "已有配对的不应重复补发");
+    let events: Vec<Event> = session.events().all().await.collect().await;
+    let result_count = events
+        .iter()
+        .filter(|e| matches!(e, Event::FunctionResult { .. }))
+        .count();
+    assert_eq!(result_count, 1, "幂等：FunctionResult 数量不变");
+}
+
+#[tokio::test]
+async fn test_reconcile_keeps_paired_calls_untouched() {
+    let svc = new_db().await;
+    let session = svc.create().await.unwrap();
+
+    // 已配对的 FunctionCall + FunctionResult 不应被重复处理
+    session
+        .events()
+        .append(&Event::UserMessage {
+            id: String::new(),
+            content: vec![ContentBlock::text("run tool")],
+        })
+        .await
+        .unwrap();
+    session
+        .events()
+        .append(&Event::FunctionCall {
+            id: String::new(),
+            call_id: "paired_1".into(),
+            name: "test_tool".into(),
+            args: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+    session
+        .events()
+        .append(&Event::FunctionResult {
+            id: String::new(),
+            call_id: "paired_1".into(),
+            name: "test_tool".into(),
+            content: Some(vec![ContentBlock::text("ok")]),
+            code: Some(0),
+        })
+        .await
+        .unwrap();
+
+    let repaired = crate::runner::reconcile_orphan_function_calls(&*session)
+        .await
+        .unwrap();
+    assert_eq!(repaired, 0, "已配对的调用不应补发");
+}
+
+#[tokio::test]
+async fn test_resume_reconciles_orphan_function_calls() {
+    let svc = new_db().await;
+    let dirs = playpen_config::Dirs::with_defaults(&PathBuf::from("/tmp"));
+
+    struct TestResolver;
+    impl playpen_profile::AgentProfileLoader for TestResolver {
+        fn agent_profiles(
+            &self,
+            _: &playpen_config::Dirs,
+        ) -> anyhow::Result<Vec<Box<dyn playpen_profile::AgentProfile>>> {
+            Ok(vec![Box::new(TestProfile::default())])
+        }
+    }
+
+    let builder = SimpleRunnerBuilder::new(
+        &playpen_config::Settings::default(),
+        &dirs,
+        svc.clone(),
+        Arc::new(TestResolver),
+    );
+
+    let runner = builder.create(Box::new(TestProfile::default())).await.unwrap();
+    let sid = runner.id().to_string();
+
+    // 在 session 中埋入孤儿 FunctionCall
+    let session = svc.get(&sid).await.unwrap();
+    session
+        .events()
+        .append(&Event::UserMessage {
+            id: String::new(),
+            content: vec![ContentBlock::text("run tool")],
+        })
+        .await
+        .unwrap();
+    session
+        .events()
+        .append(&Event::FunctionCall {
+            id: String::new(),
+            call_id: "orphan_1".into(),
+            name: "test_tool".into(),
+            args: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+
+    // resume 应触发补偿
+    let resumed = builder.resume(&sid).await.unwrap();
+    assert_eq!(resumed.id(), sid);
+
+    let loaded = svc.get(&sid).await.unwrap();
+    let events: Vec<Event> = loaded.events().all().await.collect().await;
+    let result_count = events
+        .iter()
+        .filter(|e| matches!(e, Event::FunctionResult { .. }))
+        .count();
+    assert_eq!(result_count, 1, "resume 应补发孤儿 FunctionCall 的 FunctionResult");
+
+    // 再次 resume 幂等
+    let _ = builder.resume(&sid).await.unwrap();
+    let loaded = svc.get(&sid).await.unwrap();
+    let events: Vec<Event> = loaded.events().all().await.collect().await;
+    let result_count = events
+        .iter()
+        .filter(|e| matches!(e, Event::FunctionResult { .. }))
+        .count();
+    assert_eq!(result_count, 1, "resume 补偿应幂等");
 }

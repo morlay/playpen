@@ -148,6 +148,65 @@ async fn exec_cancel() {
 }
 
 #[tokio::test]
+async fn exec_timeout() {
+    let term = NativeTerminal;
+    let cmd = Command {
+        command: "sleep 30".into(),
+        timeout_ms: Some(200),
+        ..Default::default()
+    };
+    let mut rx = term.exec(cmd).unwrap();
+
+    let results = tokio::task::spawn_blocking(move || {
+        let mut v = Vec::new();
+        while let Some(item) = rx.blocking_recv() {
+            v.push(item);
+        }
+        v
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        results.iter().any(|r| matches!(r, CommandOutput::Timeout)),
+        "应收到 Timeout，实际: {:?}",
+        results,
+    );
+}
+
+#[tokio::test]
+async fn exec_timeout_not_reached_fast_exit() {
+    let term = NativeTerminal;
+    // 命令在超时前自然退出，不应收到 Timeout
+    let cmd = Command {
+        command: "exit 0".into(),
+        timeout_ms: Some(5000),
+        ..Default::default()
+    };
+    let mut rx = term.exec(cmd).unwrap();
+
+    let results = tokio::task::spawn_blocking(move || {
+        let mut v = Vec::new();
+        while let Some(item) = rx.blocking_recv() {
+            v.push(item);
+        }
+        v
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        results.iter().any(|r| matches!(r, CommandOutput::Exited { code: 0 })),
+        "应收到 Exited(0)，实际: {:?}",
+        results,
+    );
+    assert!(
+        results.iter().all(|r| !matches!(r, CommandOutput::Timeout)),
+        "不应收到 Timeout"
+    );
+}
+
+#[tokio::test]
 async fn exec_large_output() {
     let term = NativeTerminal;
     // 产生约 700KB 输出，远超默认 pipe buffer（64KB）

@@ -154,6 +154,43 @@ async fn test_cancelled_breaks_loop() {
     );
 }
 
+/// 收到 Timeout 后立即退出，保留超时前的输出并给出提示
+#[tokio::test]
+async fn test_timeout_breaks_loop() {
+    let tool = make_tool(vec![
+        CommandOutput::Stdout {
+            text: "partial\n".into(),
+        },
+        CommandOutput::Timeout,
+        CommandOutput::Stderr {
+            text: "should not appear\n".into(),
+        },
+    ]);
+    let (ctx, _rx) = make_ctx();
+    let blocks = tool
+        .execute(ctx, serde_json::json!({"command": "test"}))
+        .await
+        .unwrap();
+
+    let texts = resource_texts(&blocks);
+    assert!(
+        texts.iter().any(|t| t.contains("partial")),
+        "超时前的输出应保留"
+    );
+    assert!(
+        !texts.iter().any(|t| t.contains("should not appear")),
+        "超时后的输出不应被处理"
+    );
+
+    // 应有"命令执行超时"提示
+    assert!(
+        blocks
+            .iter()
+            .any(|b| matches!(b, ContentBlock::Text(t) if t.text.contains("超时"))),
+        "应有超时提示"
+    );
+}
+
 /// 命令无输出 + 有退出码 → 返回"执行成功（无输出）"
 #[tokio::test]
 async fn test_no_output() {

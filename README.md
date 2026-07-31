@@ -61,9 +61,9 @@ instruction = "你是一个编程助手..."  # 当同目录下不存在 instruct
 
 [default_model_profile]
 model = "deepseek/deepseek-v4-flash"
-thinking_level = "off"
-temperature = 0.7
-top_p = 0.9
+thinking_level = "max"
+temperature = 1
+top_p = 0.95
 ```
 
 也可将 instruction 写在同目录的 `instructions.md` 中（优先于 TOML 内联字段），便于长文本管理。

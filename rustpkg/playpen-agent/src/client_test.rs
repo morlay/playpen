@@ -1,78 +1,9 @@
 use crate::client::LlmConfig;
+use crate::testing::TestProfile;
 use playpen_config::Settings;
 use playpen_config::model::{Model, ModelProfile, ModelProvider};
 use playpen_profile::AgentProfile;
 use std::collections::HashMap;
-
-struct TestProfile;
-impl AgentProfile for TestProfile {
-    fn name(&self) -> &str {
-        "test"
-    }
-    fn description(&self) -> Option<&str> {
-        None
-    }
-    fn working_dir(&self) -> &std::path::PathBuf {
-        static TMP: std::sync::LazyLock<std::path::PathBuf> =
-            std::sync::LazyLock::new(|| std::path::PathBuf::from("/tmp"));
-        &TMP
-    }
-    fn model_profile(&self) -> &ModelProfile {
-        static MP: ModelProfile = ModelProfile {
-            model: String::new(),
-            temperature: None,
-            top_p: None,
-            thinking_level: None,
-        };
-        &MP
-    }
-    fn instructions(&self) -> anyhow::Result<String> {
-        Ok("test".into())
-    }
-    fn available_skills(&self) -> anyhow::Result<Vec<Box<dyn playpen_profile::Skill>>> {
-        Ok(vec![])
-    }
-    fn tool_enabled(&self, _: &str) -> bool {
-        false
-    }
-    fn with_model_profile(
-        &self,
-        f: &dyn Fn(&ModelProfile) -> ModelProfile,
-    ) -> Box<dyn playpen_profile::AgentProfile> {
-        let mp = f(self.model_profile());
-        struct P(Box<dyn playpen_profile::AgentProfile>, ModelProfile);
-        impl playpen_profile::AgentProfile for P {
-            fn name(&self) -> &str {
-                self.0.name()
-            }
-            fn description(&self) -> Option<&str> {
-                None
-            }
-            fn working_dir(&self) -> &std::path::PathBuf {
-                self.0.working_dir()
-            }
-            fn model_profile(&self) -> &ModelProfile {
-                &self.1
-            }
-            fn instructions(&self) -> anyhow::Result<String> {
-                self.0.instructions()
-            }
-            fn available_skills(&self) -> anyhow::Result<Vec<Box<dyn playpen_profile::Skill>>> {
-                self.0.available_skills()
-            }
-            fn tool_enabled(&self, n: &str) -> bool {
-                self.0.tool_enabled(n)
-            }
-            fn with_model_profile(
-                &self,
-                f: &dyn Fn(&ModelProfile) -> ModelProfile,
-            ) -> Box<dyn playpen_profile::AgentProfile> {
-                self.0.with_model_profile(f)
-            }
-        }
-        Box::new(P(Box::new(TestProfile), mp))
-    }
-}
 
 #[test]
 fn test_from_settings_with_model_config() {
@@ -101,7 +32,7 @@ fn test_from_settings_with_model_config() {
     };
 
     // 用 TestProfile，然后在 with_model_profile 中设置 model
-    let profile = TestProfile.with_model_profile(&|mp| ModelProfile {
+    let profile = TestProfile::default().with_model_profile(&|mp| ModelProfile {
         model: "openai/gpt-4o".into(),
         ..mp.clone()
     });
@@ -120,7 +51,7 @@ fn test_from_settings_missing_provider_error() {
         sandbox: None,
         model_providers: HashMap::new(),
     };
-    let profile = TestProfile.with_model_profile(&|mp| ModelProfile {
+    let profile = TestProfile::default().with_model_profile(&|mp| ModelProfile {
         model: "unknown/model".into(),
         ..mp.clone()
     });

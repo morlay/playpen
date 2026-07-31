@@ -50,7 +50,25 @@ impl FakeTool {
 }
 
 /// 测试用 AgentProfile。
-pub struct TestProfile;
+///
+/// 持有 `ModelProfile` 字段，使 `with_model_profile` 与 `LocalAgentProfile`
+/// 一样直接重建自身，无需委托包装类型。
+pub struct TestProfile {
+    model_profile: ModelProfile,
+}
+
+impl Default for TestProfile {
+    fn default() -> Self {
+        Self {
+            model_profile: ModelProfile {
+                model: String::new(),
+                temperature: None,
+                top_p: None,
+                thinking_level: None,
+            },
+        }
+    }
+}
 
 impl playpen_profile::AgentProfile for TestProfile {
     fn name(&self) -> &str {
@@ -65,13 +83,15 @@ impl playpen_profile::AgentProfile for TestProfile {
         &TMP
     }
     fn model_profile(&self) -> &ModelProfile {
-        static MP: ModelProfile = ModelProfile {
-            model: String::new(),
-            temperature: None,
-            top_p: None,
-            thinking_level: None,
-        };
-        &MP
+        &self.model_profile
+    }
+    fn with_model_profile(
+        &self,
+        reducer: &dyn Fn(&ModelProfile) -> ModelProfile,
+    ) -> Box<dyn playpen_profile::AgentProfile> {
+        Box::new(Self {
+            model_profile: reducer(&self.model_profile),
+        })
     }
     fn instructions(&self) -> anyhow::Result<String> {
         Ok("You are a test assistant.".into())
@@ -81,43 +101,6 @@ impl playpen_profile::AgentProfile for TestProfile {
     }
     fn tool_enabled(&self, name: &str) -> bool {
         name == "test_tool"
-    }
-    fn with_model_profile(
-        &self,
-        f: &dyn Fn(&ModelProfile) -> ModelProfile,
-    ) -> Box<dyn playpen_profile::AgentProfile> {
-        let mp = f(self.model_profile());
-        struct P(Box<dyn playpen_profile::AgentProfile>, ModelProfile);
-        impl playpen_profile::AgentProfile for P {
-            fn name(&self) -> &str {
-                self.0.name()
-            }
-            fn description(&self) -> Option<&str> {
-                None
-            }
-            fn working_dir(&self) -> &PathBuf {
-                self.0.working_dir()
-            }
-            fn model_profile(&self) -> &ModelProfile {
-                &self.1
-            }
-            fn instructions(&self) -> anyhow::Result<String> {
-                self.0.instructions()
-            }
-            fn available_skills(&self) -> anyhow::Result<Vec<Box<dyn playpen_profile::Skill>>> {
-                self.0.available_skills()
-            }
-            fn tool_enabled(&self, n: &str) -> bool {
-                self.0.tool_enabled(n)
-            }
-            fn with_model_profile(
-                &self,
-                f: &dyn Fn(&ModelProfile) -> ModelProfile,
-            ) -> Box<dyn playpen_profile::AgentProfile> {
-                self.0.with_model_profile(f)
-            }
-        }
-        Box::new(P(Box::new(TestProfile), mp))
     }
 }
 
@@ -129,7 +112,7 @@ pub async fn make_runner(
     SimpleRunner::new(
         session.id().to_string(),
         session,
-        Box::new(TestProfile),
+        Box::new(TestProfile::default()),
         Settings::default(),
         svc,
     )

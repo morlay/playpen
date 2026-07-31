@@ -135,6 +135,7 @@ fn content_blocks_to_user_content(blocks: &[ContentBlock]) -> Vec<UserContent> {
 pub fn events_to_chat_history<'a>(
     events: impl Stream<Item = Event> + Send + Unpin + 'a,
 ) -> BoxStream<'a, Message> {
+    use std::collections::HashSet;
     use std::collections::VecDeque;
     use std::mem;
 
@@ -144,6 +145,8 @@ pub fn events_to_chat_history<'a>(
         queue: VecDeque<Message>,
         /// 累积的 AssistantContent
         acc: Vec<AssistantContent>,
+        /// 已出现的 FunctionCall 的 call_id，用于配对 FunctionResult
+        call_ids: HashSet<String>,
     }
 
     fn flush(acc: &mut Vec<AssistantContent>) -> Option<Message> {
@@ -157,8 +160,13 @@ pub fn events_to_chat_history<'a>(
         })
     }
 
-    fn push_event(event: Event, queue: &mut VecDeque<Message>, acc: &mut Vec<AssistantContent>) {
-        match event {
+    fn push_event(
+        event: Event,
+        queue: &mut VecDeque<Message>,
+        acc: &mut Vec<AssistantContent>,
+        call_ids: &mut HashSet<String>,
+    ) {
+        match &event {
             // 用户消息：先刷新累积的 assistant，再排队 user message
             Event::UserMessage { .. } => {
                 if let Some(msg) = flush(acc) {
@@ -168,13 +176,26 @@ pub fn events_to_chat_history<'a>(
                     queue.push_back(msg);
                 }
             }
-            // 工具结果：先刷新累积的 assistant，再排队 tool result
-            Event::FunctionResult { .. } => {
+            // 工具结果：先刷新累积的 assistant，再排队 tool result。
+            // 请求兜底：孤儿 FunctionResult（call_id 无对应 FunctionCall）直接丢弃，
+            // 不传给 LLM——否则 LLM 会收到一个没有 tool_call 的 tool_result 而报错。
+            Event::FunctionResult { call_id, .. } => {
+                if !call_ids.contains(call_id) {
+                    tracing::warn!(call_id, "丢弃无对应 FunctionCall 的 FunctionResult");
+                    return;
+                }
                 if let Some(msg) = flush(acc) {
                     queue.push_back(msg);
                 }
                 if let Some(msg) = event_to_tool_result(&event) {
                     queue.push_back(msg);
+                }
+            }
+            // FunctionCall：记录 call_id 供 FunctionResult 配对，并累积为 ToolCall
+            Event::FunctionCall { call_id, .. } => {
+                call_ids.insert(call_id.clone());
+                if let Some(content) = event_to_assistant_content(&event) {
+                    acc.push(content);
                 }
             }
             // assistant 事件：累积到 acc
@@ -191,6 +212,7 @@ pub fn events_to_chat_history<'a>(
             stream: events,
             queue: VecDeque::new(),
             acc: Vec::new(),
+            call_ids: HashSet::new(),
         },
         |mut state| async move {
             // 优先出队
@@ -200,7 +222,7 @@ pub fn events_to_chat_history<'a>(
 
             // 消费 stream，将事件压入队列
             while let Some(event) = state.stream.next().await {
-                push_event(event, &mut state.queue, &mut state.acc);
+                push_event(event, &mut state.queue, &mut state.acc, &mut state.call_ids);
                 if let Some(msg) = state.queue.pop_front() {
                     return Some((msg, state));
                 }
@@ -357,6 +379,10 @@ where
                         }
                         Ok(StreamedAssistantContent::Reasoning(_)) => {
                             // 当前所有 provider 仅输出 ReasoningDelta，完整 reasoning 块暂不处理。
+                            continue;
+                        }
+                        Ok(StreamedAssistantContent::Unknown(_)) => {
+                            // provider 特有的未知流式字段（如 assistant_items），跳过。
                             continue;
                         }
                         Ok(StreamedAssistantContent::ReasoningDelta { reasoning, .. }) => {
