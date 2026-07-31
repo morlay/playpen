@@ -1,3 +1,5 @@
 [default_model_profile]
 model = "deepseek/deepseek-v4-flash"
-top_p = 0.9
+top_p = 0.95
+thinking_level = "max"
+temperature = 1.0
