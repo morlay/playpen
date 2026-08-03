@@ -31,6 +31,16 @@ _避免使用_：待处理配置、延迟配置
 Client 声明 `terminal_output = true` 时，bash 工具以 terminal 风格推送——`terminal_info`（含 `terminal_id` / `cwd`）、`terminal_output`（含 `data`）、`terminal_exit`（含 `exit_code`）三种 meta。
 _避免使用_：终端模式、TTY 模式
 
+**Subagent（子代理）**：
+主 agent 通过 `spawn_agent` 工具生成独立 session 的子代理并取回最终输出。`handle_prompt` 在
+resume 后通过 `Context::with_subagent_host` 注入宿主（`AcpState.builder` 升为 `Arc` 后与
+runner 共享），runner 的 `run()` 据此附加 `SpawnAgentTool`。子代理会话信息经
+`FunctionResult` annotations 的 `_meta.subagent_session_info` 传递，`event_mapper` 还原为
+`ToolCallUpdate.meta`（live 与 replay 双模式），供 Zed 识别、跳转与加载子代理会话。
+索引语义：仅计四类可见事件（UserMessage / ModelMessage / ModelThought / FunctionCall）。
+详见 [docs/spawn-agent.md](../../docs/spawn-agent.md)。
+_避免使用_：子会话、从属会话
+
 **Block 转换**：
 - `to_agent_blocks()` — AcpContentBlock → AgentContentBlock（含 Blob 解码）
 - `to_acp_blocks()` — AgentContentBlock → AcpContentBlock（含 Blob 编码）

@@ -326,7 +326,7 @@ pub(crate) async fn handle_load_session(
 
     // 应用 pending 配置到 runner（runner 在后续 replay 等操作中由内部重新获取）
     if let Some(ref c) = pending {
-        apply_pending_config(c, runner);
+        let _ = apply_pending_config(c, runner);
     }
 
     // replay 在 respond 之前

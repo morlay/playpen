@@ -24,7 +24,7 @@ pub struct PendingConfig {
 /// 仅在 prompt 执行期间持有 runner 的 Weak，供 cancel 查找；cx 由各 handler 通过参数传入。
 /// runner 的强引用由 spawned task 持有，task 结束后自动释放，Weak 自然过期。
 pub struct AcpState {
-    pub builder: Box<dyn AgentRunnerBuilder>,
+    pub builder: Arc<dyn AgentRunnerBuilder>,
     pub running_runners: tokio::sync::RwLock<HashMap<String, Weak<Box<dyn AgentRunner>>>>,
     pub pending_configs: Mutex<HashMap<String, PendingConfig>>,
     pub terminal_output_enabled: AtomicBool,
@@ -69,11 +69,17 @@ pub(crate) fn send_available_commands(ctx: &dyn Context, sid: &str, skills: &[Bo
 impl AcpState {
     pub fn new(builder: Box<dyn AgentRunnerBuilder>) -> Self {
         Self {
-            builder,
+            builder: Arc::from(builder),
             running_runners: tokio::sync::RwLock::new(HashMap::new()),
             pending_configs: Mutex::new(HashMap::new()),
             terminal_output_enabled: AtomicBool::new(false),
         }
+    }
+
+    /// 为 runner 注入子代理宿主（builder 级配置，runner 的 profile 自动继承）。
+    /// 注入后 runner.run() 会附加 spawn_agent 工具。
+    pub fn with_subagent_host(&self, runner: Box<dyn AgentRunner>) -> Box<dyn AgentRunner> {
+        runner.with_subagent_host(self.builder.clone())
     }
 
     pub fn set_pending_config(&self, sid: &str, config_id: &str, value: &str) {
@@ -127,6 +133,8 @@ pub(crate) trait Context: Send + Sync {
     fn get_pending_config(&self, sid: &str) -> Option<PendingConfig>;
     async fn register_running_runner(&self, sid: &str, runner: Arc<Box<dyn AgentRunner>>);
     async fn get_runner(&self, sid: &str) -> Option<Arc<Box<dyn AgentRunner>>>;
+    /// 为 runner 注入子代理宿主（启用 spawn_agent 工具）。
+    fn with_subagent_host(&self, runner: Box<dyn AgentRunner>) -> Box<dyn AgentRunner>;
     fn notify_update(
         &self,
         sid: &str,
@@ -157,6 +165,10 @@ impl AcpStateContext {
 impl Context for AcpStateContext {
     fn builder(&self) -> &dyn AgentRunnerBuilder {
         &*self.state.builder
+    }
+
+    fn with_subagent_host(&self, runner: Box<dyn AgentRunner>) -> Box<dyn AgentRunner> {
+        self.state.with_subagent_host(runner)
     }
 
     fn put_pending_config(&self, sid: &str, key: &str, value: &str) {

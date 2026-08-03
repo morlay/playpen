@@ -71,6 +71,7 @@ pub fn build_tool_title(
         "grep" | "find" => pick("pattern").map(|p| format!("{display_name} `{p}`")),
         "bash" => pick("command"),
         "webfetch" => pick("url").map(|p| format!("{display_name} `{p}`")),
+        "spawn_agent" => pick("label").map(|l| format!("{display_name} {l}")),
         _ => None,
     }
     .unwrap_or_else(|| display_name.to_string())

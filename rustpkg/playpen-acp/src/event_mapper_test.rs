@@ -207,6 +207,59 @@ fn test_function_result_error_text_detection() {
     );
 }
 
+// ── map_event: spawn_agent subagent meta ───────────────────────────
+
+/// 构造带 `_meta.subagent_session_info` annotations 的 FunctionResult（SpawnAgentTool 输出）。
+fn subagent_result() -> Event {
+    Event::FunctionResult {
+        id: String::new(),
+        call_id: "call_spawn".into(),
+        name: "spawn_agent".into(),
+        content: Some(vec![
+            ContentBlock::text("子任务结果").with_annotations(serde_json::json!({
+                "_meta.subagent_session_info": {
+                    "session_id": "sub-001",
+                    "message_start_index": 0,
+                    "message_end_index": 3,
+                },
+                "exit_code": 0,
+            })),
+        ]),
+        code: Some(0),
+    }
+}
+
+fn tool_update_meta(updates: &[SessionUpdate]) -> Option<&agent_client_protocol::schema::v1::Meta> {
+    updates.iter().find_map(|u| match u {
+        SessionUpdate::ToolCallUpdate(tu) => tu.meta.as_ref(),
+        _ => None,
+    })
+}
+
+#[test]
+fn test_subagent_result_emits_meta_in_live_mode() {
+    let updates = mapper().map_event(&subagent_result());
+    assert!(has_tool_update(&updates, ToolCallStatus::Completed));
+
+    let meta = tool_update_meta(&updates).expect("spawn_agent 结果应带 meta");
+    let info = meta
+        .get("subagent_session_info")
+        .expect("meta 应含 subagent_session_info");
+    assert_eq!(info["session_id"], "sub-001");
+    assert_eq!(info["message_start_index"], 0);
+    assert_eq!(info["message_end_index"], 3);
+}
+
+#[test]
+fn test_subagent_result_emits_meta_in_replay_mode() {
+    // replay 模式必须保留 meta，否则主会话重载后 Zed 的子代理跳转入口丢失（G1）
+    let updates = mapper_replay().map_event(&subagent_result());
+    assert!(has_tool_update(&updates, ToolCallStatus::Completed));
+
+    let meta = tool_update_meta(&updates).expect("replay 的 spawn_agent 结果也应带 meta");
+    assert!(meta.get("subagent_session_info").is_some());
+}
+
 // ── map_event: TurnStop ───────────────────────────────────────────
 
 #[test]
@@ -346,4 +399,29 @@ fn test_default_message_id_not_needed_when_event_has_id() {
     } else {
         panic!("期望 AgentMessageChunk");
     }
+}
+
+// ── wire format：spawn_agent ToolCallUpdate 的 meta ────────────────
+
+#[test]
+fn test_subagent_result_wire_format() {
+    let updates = mapper().map_event(&subagent_result());
+    let tu = updates
+        .iter()
+        .find_map(|u| match u {
+            SessionUpdate::ToolCallUpdate(tu) => Some(tu),
+            _ => None,
+        })
+        .expect("应有 ToolCallUpdate");
+
+    // 序列化为 ACP wire format，验证 `_meta.subagent_session_info` 出现在实际发送的 JSON 中
+    let json = serde_json::to_value(tu).unwrap();
+    let meta = json
+        .get("_meta")
+        .expect("ToolCallUpdate wire 应有 _meta 字段")
+        .get("subagent_session_info")
+        .expect("_meta 应含 subagent_session_info");
+    assert_eq!(meta["session_id"], "sub-001");
+    assert_eq!(meta["message_start_index"], 0);
+    assert_eq!(meta["message_end_index"], 3);
 }

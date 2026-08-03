@@ -201,6 +201,12 @@ async fn test_weak_lifecycle() {
         fn with_profile(&self, _: Box<dyn playpen_profile::AgentProfile>) -> Box<dyn AgentRunner> {
             unimplemented!()
         }
+        fn with_subagent_host(
+            &self,
+            _: Arc<dyn playpen_agent::AgentRunnerBuilder>,
+        ) -> Box<dyn AgentRunner> {
+            unimplemented!()
+        }
         async fn run(
             &self,
             _: Vec<playpen_content::ContentBlock>,

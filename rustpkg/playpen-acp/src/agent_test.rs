@@ -74,7 +74,7 @@ mod tests {
                 self.session_service.clone(),
             );
             Ok(Box::new(FakeRunner {
-                inner,
+                inner: Arc::new(inner),
                 llm: self.llm.clone(),
             }))
         }
@@ -94,7 +94,7 @@ mod tests {
                 self.session_service.clone(),
             );
             Ok(Box::new(FakeRunner {
-                inner,
+                inner: Arc::new(inner),
                 llm: self.llm.clone(),
             }))
         }
@@ -106,8 +106,9 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
     struct FakeRunner {
-        inner: SimpleRunner,
+        inner: Arc<SimpleRunner>,
         llm: FakeLlm,
     }
 
@@ -126,7 +127,19 @@ mod tests {
             self.inner.settings()
         }
         fn with_profile(&self, p: Box<dyn playpen_profile::AgentProfile>) -> Box<dyn AgentRunner> {
-            self.inner.with_profile(p)
+            Box::new(FakeRunner {
+                inner: Arc::new(self.inner.with_profile_typed(p)),
+                llm: self.llm.clone(),
+            })
+        }
+        fn with_subagent_host(
+            &self,
+            builder: Arc<dyn playpen_agent::AgentRunnerBuilder>,
+        ) -> Box<dyn AgentRunner> {
+            Box::new(FakeRunner {
+                inner: Arc::new(self.inner.with_subagent_host_typed(builder)),
+                llm: self.llm.clone(),
+            })
         }
         async fn run(
             &self,

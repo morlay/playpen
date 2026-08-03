@@ -53,7 +53,7 @@ fn collect_acp_annotations(
 }
 
 /// 从 agent 侧的 `annotations` 中提取 `acp.annotations` 和拍平的 `_meta.*`。
-fn extract_acp_annotations(
+pub(crate) fn extract_acp_annotations(
     agent_ann: &Option<serde_json::Value>,
 ) -> (Option<Annotations>, Option<Meta>) {
     let mut acp_ann = None;

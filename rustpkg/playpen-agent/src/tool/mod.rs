@@ -14,6 +14,7 @@ mod find;
 mod grep;
 mod r#move;
 mod read;
+mod spawn_agent;
 mod webfetch;
 mod write;
 
@@ -23,6 +24,7 @@ pub(crate) use find::FindTool;
 pub(crate) use grep::GrepTool;
 pub(crate) use r#move::MoveFileTool;
 pub(crate) use read::ReadFileTool;
+pub(crate) use spawn_agent::SpawnAgentTool;
 pub(crate) use webfetch::WebFetchTool;
 pub(crate) use write::WriteFileTool;
 

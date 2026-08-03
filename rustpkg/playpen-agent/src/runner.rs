@@ -15,6 +15,7 @@ use tokio::sync::mpsc;
 
 use crate::client::LlmClient;
 use crate::convert::{StreamPipe, events_to_chat_history};
+use crate::subagent::SubagentHost;
 use crate::tool::Tool;
 
 pub const PROFILE_STATE_KEY_NAME: &str = "agent-profile:name";
@@ -42,6 +43,9 @@ pub trait AgentRunner: Send + Sync {
     fn profile(&self) -> &dyn AgentProfile;
     fn settings(&self) -> &Settings;
     fn with_profile(&self, p: Box<dyn AgentProfile>) -> Box<dyn AgentRunner>;
+    /// 返回注入了子代理宿主的新 runner（profile 继承自 self）。
+    /// 与 `with_profile` 同构：重建 runner、不修改 self。注入后 `run()` 会附加 spawn_agent 工具。
+    fn with_subagent_host(&self, builder: Arc<dyn AgentRunnerBuilder>) -> Box<dyn AgentRunner>;
 
     async fn run(&self, prompt: Vec<ContentBlock>) -> Pin<Box<dyn Stream<Item = Event> + Send>>;
 
@@ -176,9 +180,45 @@ pub struct SimpleRunner {
     settings: Settings,
     session_service: Arc<dyn SessionService>,
     cancellation_token: tokio_util::sync::CancellationToken,
+    /// 子代理宿主：`Some` 时 `run()` 会附加 spawn_agent 工具，支持嵌套子代理。
+    subagent_host: Option<Arc<dyn SubagentHost>>,
 }
 
 impl SimpleRunner {
+    /// `with_profile` 的具体类型版本：返回新的 `SimpleRunner`（保留 subagent_host 与取消令牌），
+    /// 供包装类型（如测试的 FakeRunner）复用具体类型。
+    pub fn with_profile_typed(&self, p: Box<dyn AgentProfile>) -> SimpleRunner {
+        SimpleRunner {
+            id: self.id.clone(),
+            session: self.session.clone(),
+            profile: p.into(),
+            settings: self.settings.clone(),
+            session_service: self.session_service.clone(),
+            cancellation_token: self.cancellation_token.clone(),
+            subagent_host: self.subagent_host.clone(),
+        }
+    }
+
+    /// `with_subagent_host` 的具体类型版本：注入子代理宿主，返回新的 `SimpleRunner`。
+    ///
+    /// 取消令牌与 self **共享**（而非新建）：cancel 任一视图即取消同一逻辑 runner；
+    /// 同时把令牌传给宿主，父会话 cancel 时级联取消子代理。
+    pub fn with_subagent_host_typed(&self, builder: Arc<dyn AgentRunnerBuilder>) -> SimpleRunner {
+        SimpleRunner {
+            id: self.id.clone(),
+            session: self.session.clone(),
+            profile: self.profile.clone(),
+            settings: self.settings.clone(),
+            session_service: self.session_service.clone(),
+            cancellation_token: self.cancellation_token.clone(),
+            subagent_host: Some(Arc::new(crate::subagent::RunnerSubagentHost::new(
+                builder,
+                self.profile.clone(),
+                self.cancellation_token.clone(),
+            ))),
+        }
+    }
+
     pub fn new(
         id: String,
         session: Box<dyn Session>,
@@ -193,7 +233,34 @@ impl SimpleRunner {
             settings,
             session_service,
             cancellation_token: tokio_util::sync::CancellationToken::new(),
+            subagent_host: None,
         }
+    }
+
+    /// 构建运行工具列表：Toolkit 默认工具（read/edit/write/grep/find/move/webfetch/bash，
+    /// 按 profile.working_dir 与 sandbox 配置初始化）+ 注入子代理宿主时附加 spawn_agent。
+    ///
+    /// 主 runner 与子代理 runner（均为 SimpleRunner）走同一方法——子代理的工具注册与主
+    /// agent 完全一致。最终按 `profile.tool_enabled` 过滤发生在 `build_tools_and_defs`。
+    pub(crate) fn build_run_tools(&self) -> Vec<Arc<dyn crate::tool::Tool>> {
+        let mut toolkit = playpen_toolkit::Toolkit::defaults(self.profile.working_dir());
+        if let Some(ref profile) = self.settings.sandbox
+            && profile.enabled
+        {
+            // SandboxProfile 与 Config 同源自 [sandbox] TOML，通过 serde 转换
+            if let Ok(config) = serde_json::from_value::<playpen_sandbox::config::Config>(
+                serde_json::to_value(profile).expect("SandboxProfile 序列化不应失败"),
+            ) {
+                let sandbox = playpen_sandbox::create(&config, self.profile.working_dir());
+                toolkit = toolkit.with_sandbox(sandbox);
+            }
+        }
+
+        let mut tools = crate::tool::into_tools(&toolkit);
+        if let Some(host) = &self.subagent_host {
+            tools.push(Arc::new(crate::tool::SpawnAgentTool::new(host.clone())));
+        }
+        tools
     }
 }
 
@@ -216,14 +283,11 @@ impl AgentRunner for SimpleRunner {
     }
 
     fn with_profile(&self, p: Box<dyn AgentProfile>) -> Box<dyn AgentRunner> {
-        Box::new(SimpleRunner {
-            id: self.id.clone(),
-            session: self.session.clone(),
-            profile: p.into(),
-            settings: self.settings.clone(),
-            session_service: self.session_service.clone(),
-            cancellation_token: tokio_util::sync::CancellationToken::new(),
-        })
+        Box::new(self.with_profile_typed(p))
+    }
+
+    fn with_subagent_host(&self, builder: Arc<dyn AgentRunnerBuilder>) -> Box<dyn AgentRunner> {
+        Box::new(self.with_subagent_host_typed(builder))
     }
 
     async fn run(&self, prompt: Vec<ContentBlock>) -> Pin<Box<dyn Stream<Item = Event> + Send>> {
@@ -258,21 +322,8 @@ impl AgentRunner for SimpleRunner {
             }
         }
 
-        // 构建工具列表
-        let mut toolkit = playpen_toolkit::Toolkit::defaults(self.profile.working_dir());
-        if let Some(ref profile) = self.settings.sandbox
-            && profile.enabled
-        {
-            // SandboxProfile 与 Config 同源自 [sandbox] TOML，通过 serde 转换
-            if let Ok(config) = serde_json::from_value::<playpen_sandbox::config::Config>(
-                serde_json::to_value(profile).expect("SandboxProfile 序列化不应失败"),
-            ) {
-                let sandbox = playpen_sandbox::create(&config, self.profile.working_dir());
-                toolkit = toolkit.with_sandbox(sandbox);
-            }
-        }
-
-        let tools = crate::tool::into_tools(&toolkit);
+        // 构建工具列表（Toolkit 默认工具 + 有宿主时附加 spawn_agent）
+        let tools = self.build_run_tools();
 
         // 构建 LLM 客户端
         let llm_config =

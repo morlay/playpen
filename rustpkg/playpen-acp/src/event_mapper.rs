@@ -9,7 +9,7 @@ use playpen_config::model::Model;
 use playpen_content::ContentBlock;
 use playpen_content::Event;
 
-use crate::acp_content::{map_turn_stop, text_from_opt_content, to_acp_blocks};
+use crate::acp_content::{extract_acp_annotations, map_turn_stop, text_from_opt_content, to_acp_blocks};
 use crate::display::{build_tool_title, extract_cwd, map_tool_kind, meta_with_tool_name};
 
 /// 聚合事件映射所需的上下文，避免函数入参扩散。
@@ -320,12 +320,18 @@ impl<'a> EventMapper<'a> {
                 content_parts.extend(diffs);
             }
 
-            updates.push(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+            // `_meta.*` annotations → ToolCallUpdate meta（如 spawn_agent 的 subagent_session_info）
+            let meta = extract_acp_annotations(&annotations.cloned()).1;
+            let mut update = ToolCallUpdate::new(
                 id.to_string(),
                 ToolCallUpdateFields::new()
                     .status(status)
                     .content(Some(content_parts)),
-            )));
+            );
+            if let Some(meta) = meta {
+                update = update.meta(Some(meta));
+            }
+            updates.push(SessionUpdate::ToolCallUpdate(update));
         }
         updates
     }

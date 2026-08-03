@@ -8,6 +8,7 @@
 - [工具抽象层](./rustpkg/playpen-toolkit/CONTEXT.md) — 文件系统、Shell 执行、网页抓取的能力抽象
 - [Agent 核心](./rustpkg/playpen-agent/CONTEXT.md) — AgentRunner / AgentRunnerBuilder trait，基于 rig-core + playpen-session
 - [ACP Agent](./rustpkg/playpen-acp/CONTEXT.md) — ACP 协议的 Agent 端实现，通过 stdio transport 与编辑器集成
+- [子代理（Subagent）](./docs/spawn-agent.md) — `spawn_agent` 工具、`SubagentHost` 接缝与 ACP 集成（`ToolCallUpdate._meta.subagent_session_info`）
 
 ## 关系
 
@@ -20,4 +21,5 @@
 - **Profile → Agent**：AgentRunner 持有 `AgentProfile`，提供 instruction、model、skills；AgentRunnerBuilder 通过 `AgentProfileLoader` 查找 profile
 - **Toolkit → Agent**：Agent 的 `tool/` 模块通过 `to_tool_definitions()` 将 Toolkit 工具转换为 rig-core `ToolDefinition`
 - **ACP → Agent**：ACP 层通过 `AgentRunnerBuilder` 创建/恢复 runner，调用 `runner.run()` 驱动事件流
+- **ACP → Subagent**：`handle_prompt` 通过 `Context::with_subagent_host` 注入宿主；`SubagentHost`（playpen-agent）用同一 `AgentRunnerBuilder` 创建/恢复子代理 runner
 - **Sandbox ↔ ACP**：无直接依赖。通过 Agent 层间接使用

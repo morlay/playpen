@@ -157,6 +157,14 @@ ACP 标准 `ToolCall` 只有一个 `title`（人类可读标签），缺少机�
 | `message_start_index` | `number` | 子 agent 此次 turn 的起始消息索引 |
 | `message_end_index` | `number` (可选) | 子 agent 返回后的结束消息索引 |
 
+### playpen 侧实现
+
+playpen（作为 ACP Server）在 `spawn_agent` 工具完成/失败时，通过 `FunctionResult` 文本的
+`annotations["_meta.subagent_session_info"]` 传递该结构，`event_mapper::map_function_result`
+还原为 `ToolCallUpdate.meta.subagent_session_info`（live 与 replay 双模式均保留）。索引按
+「可见条目」计数（UserMessage / ModelMessage / ModelThought / FunctionCall 四类事件），与
+Zed 的 `AgentThreadEntry` 语义对齐。详见 [docs/spawn-agent.md](spawn-agent.md)。
+
 ---
 
 ## 4. `sandbox_authorization` — 沙箱提权审批

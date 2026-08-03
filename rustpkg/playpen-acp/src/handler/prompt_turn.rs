@@ -37,6 +37,9 @@ pub(crate) async fn handle_prompt(
         })?
     };
 
+    // 注入子代理宿主（启用 spawn_agent 工具；子代理 resume 也走此路径，天然支持嵌套）
+    let runner = ctx.with_subagent_host(runner);
+
     let runner = Arc::new(runner);
     ctx.register_running_runner(&sid, runner.clone()).await;
 
