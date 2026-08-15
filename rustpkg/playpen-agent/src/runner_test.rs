@@ -6,8 +6,9 @@ use playpen_content::{ContentBlock, Event, StopReason};
 use playpen_session::SessionService;
 
 use crate::runner::{AgentRunner, AgentRunnerBuilder, SimpleRunnerBuilder};
-use crate::testing::{FakeTool, MockCompletionModel, MockStreamEvent, TestProfile, make_runner};
+use crate::testing::{FakeTool, TestProfile, make_runner};
 use playpen_session::DBSessionService;
+use rig_core::test_utils::{MockCompletionModel, MockStreamEvent};
 
 async fn new_db() -> Arc<dyn SessionService> {
     let db = sea_orm::Database::connect("sqlite::memory:").await.unwrap();

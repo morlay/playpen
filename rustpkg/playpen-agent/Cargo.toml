@@ -21,9 +21,10 @@ chrono = { workspace = true }
 tokio = { workspace = true }
 tokio-util = "0.7"
 futures = "0.3"
-rig-core = { version = "0.41", features = ["test-utils"] }
+rig-core = { version = "0.41" }
 schemars = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 tempfile = "3"
+rig-core = { version = "0.41", features = ["test-utils"] }
 sea-orm = { version = "1", features = ["sqlx-sqlite", "runtime-tokio"] }

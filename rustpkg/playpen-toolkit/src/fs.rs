@@ -100,6 +100,18 @@ pub enum FileSystemError {
     Io(String),
 }
 
+/// 文件系统抽象。
+///
+/// 各方法返回 [`anyhow::Result`]，实现可能构造具体的 [`FileSystemError`]
+/// 并通过 `.into()` 传播。调用方可用 `downcast_ref::<FileSystemError>()`
+/// 识别具体错误模式：
+///
+/// - [`FileSystemError::NotFound`]
+/// - [`FileSystemError::IsDir`]
+/// - [`FileSystemError::NotDir`]
+/// - [`FileSystemError::Permission`]
+/// - [`FileSystemError::InvalidPattern`]
+/// - [`FileSystemError::Io`]
 pub trait FileSystem: Send + Sync {
     fn working_dir(&self) -> PathBuf;
 

@@ -141,8 +141,6 @@ pub(crate) trait Context: Send + Sync {
         update: SessionUpdate,
     ) -> Result<(), agent_client_protocol::Error>;
     fn notify_info(&self, sid: &str, title: &str) -> Result<(), agent_client_protocol::Error>;
-    #[allow(dead_code)]
-    fn notify_error(&self, sid: &str, errmsg: &str) -> Result<(), agent_client_protocol::Error>;
     fn has_flag(&self, key: &str) -> bool;
     fn set_flag(&self, key: &str, value: bool);
 }
@@ -197,11 +195,6 @@ impl Context for AcpStateContext {
 
     fn notify_info(&self, sid: &str, title: &str) -> Result<(), agent_client_protocol::Error> {
         send_fake_tool_call(&self.cx, sid, title, ToolCallStatus::Completed)
-    }
-
-    #[allow(dead_code)]
-    fn notify_error(&self, sid: &str, errmsg: &str) -> Result<(), agent_client_protocol::Error> {
-        send_fake_tool_call(&self.cx, sid, errmsg, ToolCallStatus::Failed)
     }
 
     fn has_flag(&self, key: &str) -> bool {

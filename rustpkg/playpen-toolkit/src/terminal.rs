@@ -35,16 +35,6 @@ pub struct Command {
     pub cancel_token: Option<tokio_util::sync::CancellationToken>,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum ExecError {
-    #[error("{0}")]
-    Exec(String),
-    #[error("{0}")]
-    Timeout(String),
-    #[error("{0}")]
-    Permission(String),
-}
-
 pub trait Terminal: Send + Sync {
     fn working_dir(&self) -> PathBuf;
 

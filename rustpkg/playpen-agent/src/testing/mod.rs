@@ -1,7 +1,6 @@
 //! Test utilities for playpen-agent.
 //!
-//! Re-exports rig's `test_utils` and provides reusable helpers.
-pub use rig_core::test_utils::{MockCompletionModel, MockStreamEvent};
+//! Provides reusable helpers for tests.
 
 use std::path::PathBuf;
 use std::sync::Arc;

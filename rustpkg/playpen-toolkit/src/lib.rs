@@ -13,5 +13,5 @@ pub use fs::{
     GrepOption, MoveOption, MoveResult, ReadOption, ReadResult, WriteOption, WriteResult,
 };
 pub use native::{NativeFetcher, NativeFileSystem, NativeTerminal};
-pub use terminal::{Command, CommandOutput, ExecError, Terminal};
+pub use terminal::{Command, CommandOutput, Terminal};
 pub use toolkit::Toolkit;

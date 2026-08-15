@@ -77,26 +77,6 @@ impl State for DbSession {
         convert::decode_state_data::<Value>(&event_row.f_data).ok()
     }
 
-    async fn set(&mut self, key: String, value: Value) {
-        // 值未变化，跳过
-        if self.get(&key).await.as_ref() == Some(&value) {
-            return;
-        }
-
-        let eid = uuid::Uuid::now_v7().to_string();
-        let _ = insert_event_row(
-            &self.db,
-            &self.id,
-            &eid,
-            "state_update",
-            "state",
-            Some(key),
-            "",
-            &value,
-        )
-        .await;
-    }
-
     async fn entities(&self) -> BoxStream<'_, (String, Value)> {
         // 子查询先过滤 session_id，再 GROUP BY name 取唯一 key
         use sea_orm::sea_query::{Expr, Query};

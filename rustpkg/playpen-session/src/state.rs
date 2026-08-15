@@ -7,7 +7,6 @@ use serde_json::Value;
 #[async_trait]
 pub trait State: Send + Sync {
     async fn get(&self, key: &str) -> Option<Value>;
-    async fn set(&mut self, key: String, value: Value);
     /// 以流的形式遍历所有状态条目。
     /// 每次 yield (key, value)。
     async fn entities(&self) -> BoxStream<'_, (String, Value)>;

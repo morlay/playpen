@@ -172,8 +172,8 @@ impl From<&str> for ContentBlock {
 /// 格式规则：
 /// - Text → 纯文本
 /// - Resource:Text → ```<ext> {uri="<value>"}\n{text}\n```
-/// - Resource:Blob → ```<ext> {uri="<value>" mime="<media_type>,base64"}\n<base64>\n```
-/// - ResourceLink → [<name>](<uri>){mime=<media_type>}
+/// - Resource:Blob → ```<ext> {uri="<value>" type="<media_type>" base64}\n<base64>\n```
+/// - ResourceLink → [<name>](<uri>){type=<media_type>}
 pub fn format_content_block(block: &ContentBlock) -> String {
     match block {
         ContentBlock::Text(t) => t.text.clone(),

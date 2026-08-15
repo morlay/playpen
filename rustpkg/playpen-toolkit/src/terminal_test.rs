@@ -9,12 +9,6 @@ fn terminal_cmd_schema() {
 }
 
 #[test]
-fn terminal_error_display() {
-    assert!(format!("{}", ExecError::Exec("fail".into())).contains("fail"));
-    assert!(format!("{}", ExecError::Timeout("超时".into())).contains("超时"));
-}
-
-#[test]
 fn output_type_serde() {
     let stdout = CommandOutput::Stdout {
         text: "hello".into(),

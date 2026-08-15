@@ -10,7 +10,7 @@ pub trait SessionService: Send + Sync {
     /// 获取 session。
     async fn get(&self, id: &str) -> anyhow::Result<Box<dyn Session>>;
 
-    /// 回退到指定事件（含），移除其后所有事件。
+    /// 删除指定事件及其后所有事件（含指定事件本身），session 头指针回退到指定事件的前一事件。
     async fn rewind(&self, event_id: &str) -> anyhow::Result<Box<dyn Session>>;
 
     /// 删除 session。

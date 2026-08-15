@@ -13,8 +13,9 @@ mod tests {
     };
     use agent_client_protocol::{ByteStreams, Client};
     use playpen_agent::runner::{AgentRunner, AgentRunnerBuilder, SimpleRunner};
-    use playpen_agent::testing::{MockCompletionModel, MockStreamEvent, TestProfile};
+    use playpen_agent::testing::TestProfile;
     use playpen_config::Settings;
+    use rig_core::test_utils::{MockCompletionModel, MockStreamEvent};
     use playpen_session::SessionService;
     use tokio::sync::mpsc;
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};

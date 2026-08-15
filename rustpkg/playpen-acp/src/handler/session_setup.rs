@@ -9,6 +9,11 @@ use agent_client_protocol::{Responder, util};
 
 use crate::acp_state::{Context, PendingConfig, send_available_commands};
 
+/// 新 session：response 发送后、AvailableCommands 通知前的短暂延迟。
+/// client 在收到 NewSessionResponse 后才建立 session 状态；若通知早于其处理 response 到达，
+/// 可能因 session 尚未就绪而被丢弃。20ms 为经验性保守值。
+const NEW_SESSION_NOTIFY_DELAY: std::time::Duration = std::time::Duration::from_millis(20);
+
 // ── helpers ──────────────────────────────────────────────────────────
 
 fn capitalize(s: &str) -> String {
@@ -299,8 +304,10 @@ pub(crate) async fn handle_new_session(
     responder
         .respond(NewSessionResponse::new(SessionId::from(sid.clone())).config_options(opts))?;
 
-    // ugly delay for new only
-    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    // 等待 client 处理 NewSessionResponse 后再发送 AvailableCommands 通知：
+    // client 在收到 response 后才建立 session 状态，若通知先于其处理 response 到达，
+    // 可能因 session 尚未就绪而被丢弃。20ms 为经验性保守值。
+    tokio::time::sleep(NEW_SESSION_NOTIFY_DELAY).await;
     send_available_commands(ctx, &sid, &skills);
 
     Ok(())
@@ -323,11 +330,6 @@ pub(crate) async fn handle_load_session(
     let project_root = runner.profile().working_dir().clone();
     let term_enabled = ctx.has_flag("terminal_output");
     let skills = runner.profile().available_skills().unwrap_or_default();
-
-    // 应用 pending 配置到 runner（runner 在后续 replay 等操作中由内部重新获取）
-    if let Some(ref c) = pending {
-        let _ = apply_pending_config(c, runner);
-    }
 
     // replay 在 respond 之前
     if let Err(e) = replay_session_events(ctx, &sid, &project_root, term_enabled).await {
