@@ -25,4 +25,4 @@ async-trait = { workspace = true }
 [dev-dependencies]
 tempfile = "3"
 rig-core = { version = "0.41", features = ["test-utils"] }
-sea-orm = { version = "1", features = ["sqlx-sqlite", "runtime-tokio"] }
+sea-orm = { version = "2", features = ["sqlx-sqlite", "runtime-tokio"] }

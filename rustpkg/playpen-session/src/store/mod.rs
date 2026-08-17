@@ -56,7 +56,7 @@ impl Session for DbSession {
 impl State for DbSession {
     async fn get(&self, key: &str) -> Option<Value> {
         // 子查询：先从小表 session_events 过滤 session_id，再查 events
-        use sea_orm::sea_query::{Expr, Query};
+        use sea_orm::sea_query::{Expr, ExprTrait, Query};
         let sub = Query::select()
             .column(session_events::Column::FEventId)
             .from(session_events::Entity)
@@ -79,7 +79,7 @@ impl State for DbSession {
 
     async fn entities(&self) -> BoxStream<'_, (String, Value)> {
         // 子查询先过滤 session_id，再 GROUP BY name 取唯一 key
-        use sea_orm::sea_query::{Expr, Query};
+        use sea_orm::sea_query::{Expr, ExprTrait, Query};
         let sub = Query::select()
             .column(session_events::Column::FEventId)
             .from(session_events::Entity)
@@ -147,7 +147,7 @@ impl Events for DbSession {
     }
 
     async fn all(&self) -> BoxStream<'_, Event> {
-        use sea_orm::sea_query::{Expr, Order, Query};
+        use sea_orm::sea_query::{Expr, ExprTrait, Order, Query};
         // 子查询先从小表取 event_id + sequence
         let sub = Query::select()
             .column(session_events::Column::FEventId)
@@ -220,7 +220,7 @@ struct RoleFilteredEvents<'a> {
 #[async_trait]
 impl Events for RoleFilteredEvents<'_> {
     async fn all(&self) -> BoxStream<'_, Event> {
-        use sea_orm::sea_query::{Expr, Order, Query};
+        use sea_orm::sea_query::{Expr, ExprTrait, Order, Query};
         let sub = Query::select()
             .column(session_events::Column::FEventId)
             .from(session_events::Entity)
@@ -262,7 +262,7 @@ impl Events for RoleFilteredEvents<'_> {
     }
 
     async fn len(&self) -> usize {
-        use sea_orm::sea_query::{Expr, Query};
+        use sea_orm::sea_query::{Expr, ExprTrait, Query};
         let sub = Query::select()
             .column(session_events::Column::FEventId)
             .from(session_events::Entity)
@@ -305,10 +305,7 @@ impl DBSessionService {
     pub async fn migrate(&self) -> anyhow::Result<()> {
         // SQLite WAL 模式：允许并发读写
         self.db
-            .execute(sea_orm::Statement::from_string(
-                self.db.get_database_backend(),
-                "PRAGMA journal_mode=WAL;",
-            ))
+            .execute_unprepared("PRAGMA journal_mode=WAL;")
             .await?;
 
         self::migration::Migrator::up(&self.db, None).await?;

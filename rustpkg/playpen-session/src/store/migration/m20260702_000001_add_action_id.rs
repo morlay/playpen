@@ -45,9 +45,9 @@ enum Tables {
 }
 
 impl Iden for Tables {
-    fn unquoted(&self, s: &mut dyn std::fmt::Write) {
+    fn unquoted(&self) -> &str {
         match self {
-            Tables::TEvents => write!(s, "t_events").unwrap(),
+            Tables::TEvents => "t_events",
         }
     }
 }
@@ -57,9 +57,9 @@ enum ActionId {
 }
 
 impl Iden for ActionId {
-    fn unquoted(&self, s: &mut dyn std::fmt::Write) {
+    fn unquoted(&self) -> &str {
         match self {
-            ActionId::FActionId => write!(s, "f_action_id").unwrap(),
+            ActionId::FActionId => "f_action_id",
         }
     }
 }

@@ -92,7 +92,7 @@ impl MigrationTrait for Migration {
                         ColumnDef::new(EventsCol::FData)
                             .blob()
                             .not_null()
-                            .default(vec![]),
+                            .default(Vec::<u8>::new()),
                     )
                     .col(
                         ColumnDef::new(EventsCol::FCreatedAt)
@@ -182,11 +182,11 @@ enum Tables {
 }
 
 impl Iden for Tables {
-    fn unquoted(&self, s: &mut dyn std::fmt::Write) {
+    fn unquoted(&self) -> &str {
         match self {
-            Tables::TEvents => write!(s, "t_events").unwrap(),
-            Tables::TSessionEvents => write!(s, "t_session_events").unwrap(),
-            Tables::TSessions => write!(s, "t_sessions").unwrap(),
+            Tables::TEvents => "t_events",
+            Tables::TSessionEvents => "t_session_events",
+            Tables::TSessions => "t_sessions",
         }
     }
 }
@@ -205,17 +205,17 @@ enum EventsCol {
 }
 
 impl Iden for EventsCol {
-    fn unquoted(&self, s: &mut dyn std::fmt::Write) {
+    fn unquoted(&self) -> &str {
         match self {
-            EventsCol::FId => write!(s, "f_id").unwrap(),
-            EventsCol::FEventId => write!(s, "f_event_id").unwrap(),
-            EventsCol::FParentId => write!(s, "f_parent_id").unwrap(),
-            EventsCol::FKind => write!(s, "f_kind").unwrap(),
-            EventsCol::FRole => write!(s, "f_role").unwrap(),
-            EventsCol::FName => write!(s, "f_name").unwrap(),
-            EventsCol::FEncoding => write!(s, "f_encoding").unwrap(),
-            EventsCol::FData => write!(s, "f_data").unwrap(),
-            EventsCol::FCreatedAt => write!(s, "f_created_at").unwrap(),
+            EventsCol::FId => "f_id",
+            EventsCol::FEventId => "f_event_id",
+            EventsCol::FParentId => "f_parent_id",
+            EventsCol::FKind => "f_kind",
+            EventsCol::FRole => "f_role",
+            EventsCol::FName => "f_name",
+            EventsCol::FEncoding => "f_encoding",
+            EventsCol::FData => "f_data",
+            EventsCol::FCreatedAt => "f_created_at",
         }
     }
 }
@@ -229,12 +229,12 @@ enum SessionEventsCol {
 }
 
 impl Iden for SessionEventsCol {
-    fn unquoted(&self, s: &mut dyn std::fmt::Write) {
+    fn unquoted(&self) -> &str {
         match self {
-            SessionEventsCol::FId => write!(s, "f_id").unwrap(),
-            SessionEventsCol::FSessionId => write!(s, "f_session_id").unwrap(),
-            SessionEventsCol::FEventId => write!(s, "f_event_id").unwrap(),
-            SessionEventsCol::FSequence => write!(s, "f_sequence").unwrap(),
+            SessionEventsCol::FId => "f_id",
+            SessionEventsCol::FSessionId => "f_session_id",
+            SessionEventsCol::FEventId => "f_event_id",
+            SessionEventsCol::FSequence => "f_sequence",
         }
     }
 }
@@ -248,12 +248,12 @@ enum SessionsCol {
 }
 
 impl Iden for SessionsCol {
-    fn unquoted(&self, s: &mut dyn std::fmt::Write) {
+    fn unquoted(&self) -> &str {
         match self {
-            SessionsCol::FId => write!(s, "f_id").unwrap(),
-            SessionsCol::FSessionId => write!(s, "f_session_id").unwrap(),
-            SessionsCol::FHeadEventId => write!(s, "f_head_event_id").unwrap(),
-            SessionsCol::FHeadSequence => write!(s, "f_head_sequence").unwrap(),
+            SessionsCol::FId => "f_id",
+            SessionsCol::FSessionId => "f_session_id",
+            SessionsCol::FHeadEventId => "f_head_event_id",
+            SessionsCol::FHeadSequence => "f_head_sequence",
         }
     }
 }
