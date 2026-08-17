@@ -1,6 +1,6 @@
 # Zed ACP 私有 Meta 扩展
 
-> 分析基于 `acp_thread` + `agent_servers`，ACP 协议版本 `agent-client-protocol-schema` v0.14.0。
+> 分析基于 `acp_thread` + `agent_servers`，ACP 协议版本 `agent-client-protocol-schema` v1.5.0（对应 `agent-client-protocol` v2.0.0）。
 
 ## 背景
 

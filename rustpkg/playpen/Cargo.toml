@@ -11,7 +11,7 @@ playpen-session = { workspace = true }
 playpen-profile = { workspace = true }
 playpen-acp = { workspace = true }
 playpen-content = { workspace = true }
-agent-client-protocol = "=1.3.0"
+agent-client-protocol = "=2.0.0"
 clap = { version = "4", features = ["derive"] }
 toml = "1"
 tokio = { workspace = true }
