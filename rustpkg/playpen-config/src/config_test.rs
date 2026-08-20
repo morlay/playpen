@@ -15,8 +15,8 @@ api_key = "sk-test"
     .unwrap();
     let s = merge_settings(&[a, b]).unwrap();
     assert_eq!(s.default_profile.as_deref(), Some("code"));
-    // 预设 deepseek 被用户配置覆盖，长度仍为 2（deepseek + mimo）
-    assert_eq!(s.model_providers.len(), 2);
+    // 预设 deepseek 被用户配置覆盖，长度仍为 3（deepseek + ollma + mimo）
+    assert_eq!(s.model_providers.len(), 3);
 }
 
 #[test]
@@ -46,7 +46,7 @@ fn appconfig_load_or_default_works() {
     let config = AppConfig::load_or_default(dir.path());
     // 预设 provider 已注入
     assert!(config.settings.model_providers.contains_key("deepseek"));
-    assert_eq!(config.settings.model_providers.len(), 2);
+    assert_eq!(config.settings.model_providers.len(), 3);
 }
 
 #[test]

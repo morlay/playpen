@@ -1,7 +1,35 @@
 use crate::model::{Cost, Currency, InputType, Model, ModelProvider, ThinkingLevel};
 
 pub fn providers() -> Vec<(&'static str, ModelProvider)> {
-    vec![("deepseek", deepseek_provider()), ("mimo", mimo_provider())]
+    vec![
+        ("deepseek", deepseek_provider()),
+        ("ollma", ollma_provider()),
+        ("mimo", mimo_provider()),
+    ]
+}
+
+fn ollma_provider() -> ModelProvider {
+    ModelProvider {
+        name: "Ollma".into(),
+        base_url: "https://ollama.com/v1".into(),
+        api_key: "${OLLAMA_API_KEY}".into(),
+        models: Some(vec![Model {
+            name: "deepseek-v4-flash:0731".into(),
+            display_name: Some("DeepSeek V4 Flash 0731".into()),
+            reasoning_efforts: vec![ThinkingLevel::Off, ThinkingLevel::High, ThinkingLevel::Max],
+            input_types: vec![InputType::Text],
+            context_window: 1_000_000,
+            // Ollama 侧该模型的最大输出为 65536 tokens，
+            // 超过会报 400: max_tokens exceeds model's maximum output tokens
+            max_tokens: 65_536,
+            cost: Cost {
+                input: 1.0,
+                output: 2.0,
+                cache_read: 0.02,
+                currency: Currency::CNY,
+            },
+        }]),
+    }
 }
 
 fn deepseek_provider() -> ModelProvider {
