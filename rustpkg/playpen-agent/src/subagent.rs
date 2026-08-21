@@ -90,7 +90,11 @@ impl RunnerSubagentHost {
 #[async_trait]
 impl SubagentHost for RunnerSubagentHost {
     async fn spawn(&self, label: &str, session_id: Option<&str>) -> anyhow::Result<SubagentHandle> {
-        let mode = if session_id.is_some() { "resume" } else { "create" };
+        let mode = if session_id.is_some() {
+            "resume"
+        } else {
+            "create"
+        };
         tracing::info!(
             label,
             session_id = ?session_id,

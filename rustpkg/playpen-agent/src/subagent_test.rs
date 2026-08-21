@@ -67,7 +67,7 @@ impl AgentRunner for FakeRunner {
             tokio::time::sleep(self.delay).await;
         }
         self.inner
-            .run_with_model(self.llm.clone(), prompt, vec![], None, |_| None)
+            .run_with_model(self.llm.clone(), prompt, vec![], None, None)
             .await
     }
     async fn rewind(&self) -> anyhow::Result<()> {
@@ -235,7 +235,10 @@ async fn test_spawn_create_and_send() {
 
     let output = host.send(&handle, "请计算").await.unwrap();
     assert_eq!(output.text, "子任务结果");
-    assert!(output.message_end_index >= 1, "end 索引应指向最后一条可见事件");
+    assert!(
+        output.message_end_index >= 1,
+        "end 索引应指向最后一条可见事件"
+    );
 }
 
 #[tokio::test]
@@ -276,7 +279,10 @@ async fn test_send_error_propagates() {
 
     let handle = host.spawn("任务", None).await.unwrap();
     let result = host.send(&handle, "执行").await;
-    assert!(result.is_err(), "LLM stream 错误应传播为 send Err: {result:?}");
+    assert!(
+        result.is_err(),
+        "LLM stream 错误应传播为 send Err: {result:?}"
+    );
 }
 
 // ── 父 cancel 级联 ──────────────────────────────────────────────────
@@ -294,7 +300,10 @@ async fn test_parent_cancel_cascades_to_subagent() {
     parent_cancel.cancel();
     let result = host.send(&handle, "执行").await;
     let err = result.expect_err("父 cancel 后 send 应失败");
-    assert!(err.to_string().contains("取消"), "错误信息应说明取消: {err}");
+    assert!(
+        err.to_string().contains("取消"),
+        "错误信息应说明取消: {err}"
+    );
 }
 
 #[tokio::test]
@@ -360,8 +369,13 @@ async fn test_subagent_runner_tools_registered() {
 
     let tools = runner.build_run_tools();
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-    for required in ["read", "edit", "write", "grep", "find", "move", "webfetch", "bash"] {
-        assert!(names.contains(&required), "子代理应有 {required}: {names:?}");
+    for required in [
+        "read", "edit", "write", "grep", "find", "move", "webfetch", "bash",
+    ] {
+        assert!(
+            names.contains(&required),
+            "子代理应有 {required}: {names:?}"
+        );
     }
     assert!(
         names.contains(&"spawn_agent"),
@@ -382,7 +396,9 @@ struct MarkerProfile {
 impl AgentProfile for MarkerProfile {
     fn with_model_profile(
         &self,
-        _reducer: &dyn Fn(&playpen_config::model::ModelProfile) -> playpen_config::model::ModelProfile,
+        _reducer: &dyn Fn(
+            &playpen_config::model::ModelProfile,
+        ) -> playpen_config::model::ModelProfile,
     ) -> Box<dyn AgentProfile> {
         Box::new(MarkerProfile {
             name: self.name.clone(),
@@ -486,7 +502,12 @@ impl tracing::Subscriber for CapturingSubscriber {
         let mut visitor = MessageVisitor(&mut message);
         event.record(&mut visitor);
         // 调试：记录 level + target + message
-        let line = format!("[{:?}] {} | {:?}", event.metadata().level(), event.metadata().target(), message);
+        let line = format!(
+            "[{:?}] {} | {:?}",
+            event.metadata().level(),
+            event.metadata().target(),
+            message
+        );
         self.events.lock().unwrap().push(line);
     }
     fn enter(&self, _span: &tracing::span::Id) {}
@@ -526,11 +547,26 @@ fn test_subagent_emits_logs() {
 
     let msgs: Vec<String> = events.lock().unwrap().clone();
     let joined = msgs.join("\n");
-    assert!(joined.contains("subagent spawn 开始"), "应有 spawn 开始日志:\n{joined}");
-    assert!(joined.contains("subagent spawn 完成"), "应有 spawn 完成日志:\n{joined}");
-    assert!(joined.contains("subagent send 开始"), "应有 send 开始日志:\n{joined}");
-    assert!(joined.contains("subagent turn 结束"), "应有 turn 结束日志:\n{joined}");
-    assert!(joined.contains("subagent send 完成"), "应有 send 完成日志:\n{joined}");
+    assert!(
+        joined.contains("subagent spawn 开始"),
+        "应有 spawn 开始日志:\n{joined}"
+    );
+    assert!(
+        joined.contains("subagent spawn 完成"),
+        "应有 spawn 完成日志:\n{joined}"
+    );
+    assert!(
+        joined.contains("subagent send 开始"),
+        "应有 send 开始日志:\n{joined}"
+    );
+    assert!(
+        joined.contains("subagent turn 结束"),
+        "应有 turn 结束日志:\n{joined}"
+    );
+    assert!(
+        joined.contains("subagent send 完成"),
+        "应有 send 完成日志:\n{joined}"
+    );
 }
 
 #[tokio::test]
@@ -553,7 +589,11 @@ async fn test_subagent_tool_output_fallback() {
     let svc = new_db().await;
     // 第一轮 tool_call（产生 FunctionResult），第二轮空（无文本消息）→ 应回退工具输出
     let llm = MockCompletionModel::from_stream_turns([
-        vec![MockStreamEvent::tool_call("nonexistent_tool", "nonexistent_tool", serde_json::json!({}))],
+        vec![MockStreamEvent::tool_call(
+            "nonexistent_tool",
+            "nonexistent_tool",
+            serde_json::json!({}),
+        )],
         Vec::new(),
     ]);
     let host = make_host(svc, llm);

@@ -215,16 +215,16 @@ fn subagent_result() -> Event {
         id: String::new(),
         call_id: "call_spawn".into(),
         name: "spawn_agent".into(),
-        content: Some(vec![
-            ContentBlock::text("子任务结果").with_annotations(serde_json::json!({
+        content: Some(vec![ContentBlock::text("子任务结果").with_annotations(
+            serde_json::json!({
                 "_meta.subagent_session_info": {
                     "session_id": "sub-001",
                     "message_start_index": 0,
                     "message_end_index": 3,
                 },
                 "exit_code": 0,
-            })),
-        ]),
+            }),
+        )]),
         code: Some(0),
     }
 }

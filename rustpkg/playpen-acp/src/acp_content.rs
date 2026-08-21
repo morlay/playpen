@@ -5,16 +5,18 @@ use agent_client_protocol::schema::v1::{
     ToolCall, ToolCallStatus, UsageUpdate,
 };
 use playpen_config::model::Model;
-use playpen_content::{ContentBlock, Resource, ResourceLink, StopReason, TextContent, TokenUsage};
+use playpen_content::{
+    ContentBlock, Resource, ResourceLink, StopReason, TextContent, TokenUsage, format_content_block,
+};
 
 fn text_from_blocks(blocks: &[ContentBlock]) -> String {
     blocks
         .iter()
-        .find_map(|b| match b {
-            ContentBlock::Text(t) => Some(t.text.clone()),
-            _ => None,
-        })
-        .unwrap_or_default()
+        // 二进制 Blob 不进展示文本（避免 base64 爆量）
+        .filter(|b| !matches!(b, ContentBlock::Resource(Resource::Blob { .. })))
+        .map(format_content_block)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub fn text_from_opt_content(content: &Option<Vec<ContentBlock>>) -> String {

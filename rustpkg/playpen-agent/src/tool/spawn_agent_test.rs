@@ -90,7 +90,11 @@ impl SubagentHost for FakeHost {
         Ok(SubagentHandle::new(runner, 0))
     }
 
-    async fn send(&self, _handle: &SubagentHandle, _prompt: &str) -> anyhow::Result<SubagentOutput> {
+    async fn send(
+        &self,
+        _handle: &SubagentHandle,
+        _prompt: &str,
+    ) -> anyhow::Result<SubagentOutput> {
         if let Some(e) = &self.send_error {
             return Err(anyhow::anyhow!(e.to_string()));
         }
@@ -111,7 +115,10 @@ async fn run_tool(
     let cancel = tokio_util::sync::CancellationToken::new();
     let ctx = ToolContext::new("evt-1", "call-1", "spawn_agent", tx, cancel);
     let tool = SpawnAgentTool::new(host);
-    let blocks = tool.execute(ctx, args).await.expect("execute 不应 Err（铁律）");
+    let blocks = tool
+        .execute(ctx, args)
+        .await
+        .expect("execute 不应 Err（铁律）");
     let mut events = Vec::new();
     while let Ok(ev) = rx.try_recv() {
         events.push(ev);
@@ -138,11 +145,8 @@ fn annotations_of(blocks: &[ContentBlock]) -> Option<&serde_json::Value> {
 #[tokio::test]
 async fn test_spawn_success_carries_session_info() {
     let host: Arc<dyn SubagentHost> = Arc::new(FakeHost::ok("子任务完成，结果是 42"));
-    let (blocks, events) = run_tool(
-        host,
-        json!({ "label": "计算", "message": "请计算 40+2" }),
-    )
-    .await;
+    let (blocks, events) =
+        run_tool(host, json!({ "label": "计算", "message": "请计算 40+2" })).await;
 
     let text = text_of(&blocks).expect("成功应有输出文本");
     assert_eq!(text, "子任务完成，结果是 42");
@@ -156,7 +160,9 @@ async fn test_spawn_success_carries_session_info() {
 
     // 运行中应发射一条 FunctionOutputDelta 进度提示
     assert!(
-        events.iter().any(|e| matches!(e, Event::FunctionOutputDelta { .. })),
+        events
+            .iter()
+            .any(|e| matches!(e, Event::FunctionOutputDelta { .. })),
         "创建子代理后应发射进度 delta"
     );
 }
@@ -170,7 +176,10 @@ async fn test_send_failure_keeps_session_id() {
     let (blocks, _) = run_tool(host, json!({ "label": "调研", "message": "调研一下" })).await;
 
     let text = text_of(&blocks).expect("失败也应有输出文本");
-    assert!(text.contains("子代理执行失败"), "失败文本应说明原因: {text}");
+    assert!(
+        text.contains("子代理执行失败"),
+        "失败文本应说明原因: {text}"
+    );
 
     let ann = annotations_of(&blocks).expect("失败结果也应带 annotations");
     // 铁律：失败走 Ok + exit_code=1，annotations 保留 session_id
@@ -194,7 +203,10 @@ async fn test_spawn_failure_returns_err() {
     let result = tool
         .execute(ctx, json!({ "label": "x", "message": "y" }))
         .await;
-    assert!(result.is_err(), "spawn 失败应返回 Err（无 session 信息可携带）");
+    assert!(
+        result.is_err(),
+        "spawn 失败应返回 Err（无 session 信息可携带）"
+    );
 }
 
 #[tokio::test]

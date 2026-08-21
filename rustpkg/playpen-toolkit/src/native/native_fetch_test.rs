@@ -200,11 +200,7 @@ fn converts_links() {
 fn converts_images() {
     let html = r#"<img src="cat.png" alt="A cat" />"#;
     let md = html_to_markdown(html);
-    assert!(
-        md.contains("![A cat](cat.png)"),
-        "图片格式错误: {}",
-        md
-    );
+    assert!(md.contains("![A cat](cat.png)"), "图片格式错误: {}", md);
 }
 
 #[test]
@@ -219,11 +215,7 @@ fn converts_code_block() {
 fn converts_inline_code() {
     let html = r#"<p>use <code>std::fmt</code></p>"#;
     let md = html_to_markdown(html);
-    assert!(
-        md.contains("`std::fmt`"),
-        "内联代码格式错误: {}",
-        md
-    );
+    assert!(md.contains("`std::fmt`"), "内联代码格式错误: {}", md);
 }
 
 #[test]
@@ -321,16 +313,8 @@ fn html_with_only_noise() {
 fn inline_code_escapes_backtick() {
     let html = r#"<p>use <code>Option::`variant</code></p>"#;
     let md = html_to_markdown(html);
-    assert!(
-        md.contains("``"),
-        "含反引号的内容需用双反引号包裹: {}",
-        md
-    );
-    assert!(
-        md.contains("`variant"),
-        "内容中的反引号应保留: {}",
-        md
-    );
+    assert!(md.contains("``"), "含反引号的内容需用双反引号包裹: {}", md);
+    assert!(md.contains("`variant"), "内容中的反引号应保留: {}", md);
 }
 
 #[test]

@@ -30,9 +30,12 @@ impl Tool for BashTool {
         let mut cmd: Command = serde_json::from_value(args)?;
         cmd.cancel_token = Some(ctx.cancellation_token().clone());
 
+        tracing::debug!(command = %cmd.command, timeout_ms = ?cmd.timeout_ms, "bash 工具开始执行");
+
         let event_id = ctx.event_id().to_string();
         let call_id = ctx.call_id().to_string();
         let call_name = ctx.call_name().to_string();
+        let command = cmd.command.clone();
         let mut rx = self.term.exec(cmd)?;
 
         let mut stdout_buf = String::new();
@@ -85,8 +88,22 @@ impl Tool for BashTool {
 
         // rx.recv() 返回 None（channel 关闭）但未收到 Exited 事件时，默认视为 exit 0
         if exit_code.is_none() && !cancelled {
+            tracing::warn!(
+                command = %command,
+                "bash 工具事件流提前关闭且未收到 Exited/Cancelled/Timeout，兜底视为 exit 0"
+            );
             exit_code = Some(0);
         }
+
+        tracing::debug!(
+            command = %command,
+            exit_code,
+            cancelled,
+            timed_out,
+            stdout_len = stdout_buf.len(),
+            stderr_len = stderr_buf.len(),
+            "bash 工具执行结束"
+        );
 
         let mut blocks: Vec<ContentBlock> = Vec::new();
 

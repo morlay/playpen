@@ -144,7 +144,10 @@ async fn test_builder_create_and_resume() {
         Arc::new(TestResolver),
     );
 
-    let runner = builder.create(Box::new(TestProfile::default())).await.unwrap();
+    let runner = builder
+        .create(Box::new(TestProfile::default()))
+        .await
+        .unwrap();
     let sid = runner.id().to_string();
     assert!(!sid.is_empty());
     assert_eq!(runner.profile().name(), "test");
@@ -196,7 +199,10 @@ async fn test_profile_state_persisted_on_create() {
         Arc::new(resolver),
     );
 
-    let runner = builder.create(Box::new(TestProfile::default())).await.unwrap();
+    let runner = builder
+        .create(Box::new(TestProfile::default()))
+        .await
+        .unwrap();
     let sid = runner.id().to_string();
 
     use futures::StreamExt;
@@ -262,7 +268,7 @@ async fn test_run_with_model_text_only() {
 
     let prompt = vec![ContentBlock::text("hi")];
     let stream = runner
-        .run_with_model(mock, prompt, vec![], None, |_| None)
+        .run_with_model(mock, prompt, vec![], None, None)
         .await;
     let events: Vec<Event> = stream.collect().await;
 
@@ -304,7 +310,7 @@ async fn test_run_with_model_tool_call() {
             vec![ContentBlock::text("run tool")],
             tools,
             None,
-            |_| None,
+            None,
         )
         .await;
     let events: Vec<Event> = stream.collect().await;
@@ -387,7 +393,7 @@ async fn test_run_with_model_multi_turn() {
             vec![ContentBlock::text("turn 1")],
             vec![],
             None,
-            |_| None,
+            None,
         )
         .await
         .collect()
@@ -403,7 +409,7 @@ async fn test_run_with_model_multi_turn() {
             vec![ContentBlock::text("turn 2")],
             vec![],
             None,
-            |_| None,
+            None,
         )
         .await
         .collect()
@@ -443,7 +449,7 @@ async fn test_tool_schema_persisted_to_state() {
     )];
 
     let stream = runner
-        .run_with_model(mock, vec![ContentBlock::text("hi")], tools, None, |_| None)
+        .run_with_model(mock, vec![ContentBlock::text("hi")], tools, None, None)
         .await;
     let _: Vec<Event> = stream.collect().await;
 
@@ -486,7 +492,7 @@ async fn test_disabled_tool_filtered_out() {
     ];
 
     let stream = runner
-        .run_with_model(mock, vec![ContentBlock::text("run")], tools, None, |_| None)
+        .run_with_model(mock, vec![ContentBlock::text("run")], tools, None, None)
         .await;
     let events: Vec<Event> = stream.collect().await;
 
@@ -527,9 +533,7 @@ async fn test_additional_params_with_values() {
     }));
 
     let stream = runner
-        .run_with_model(mock, vec![ContentBlock::text("hi")], vec![], extra, |_| {
-            None
-        })
+        .run_with_model(mock, vec![ContentBlock::text("hi")], vec![], extra, None)
         .await;
     let events: Vec<Event> = stream.collect().await;
     assert!(!events.is_empty(), "additional_params 不应影响正常流程");
@@ -549,14 +553,14 @@ async fn test_only_thought_retries() {
     // 第一轮仅返回 thought（无 message 无 call），第二轮正常返回文本
     let mock = MockCompletionModel::from_stream_turns([
         vec![
-            MockStreamEvent::reasoning_delta(None::<String>, "thinking..."),
+            MockStreamEvent::reasoning_delta("thinking..."),
             MockStreamEvent::final_response_with_default_usage(),
         ],
         vec![MockStreamEvent::text("final response")],
     ]);
 
     let stream = runner
-        .run_with_model(mock, vec![ContentBlock::text("hi")], vec![], None, |_| None)
+        .run_with_model(mock, vec![ContentBlock::text("hi")], vec![], None, None)
         .await;
     let events: Vec<Event> = stream.collect().await;
 
@@ -618,8 +622,13 @@ async fn test_cancel_after_function_call_emits_cancelled_result() {
 
     let handle = tokio::spawn(async move {
         let session = svc_for_task.get(&sid_for_task).await.unwrap();
-        crate::runner::consume_turn_stream(stream, &tx_out_for_task, session.events(), &cancel_for_task)
-            .await
+        crate::runner::consume_turn_stream(
+            stream,
+            &tx_out_for_task,
+            session.events(),
+            &cancel_for_task,
+        )
+        .await
     });
 
     // 1. 发送 FunctionCall，等待其持久化到 session（此时工具尚未执行）
@@ -666,8 +675,7 @@ async fn test_cancel_after_function_call_emits_cancelled_result() {
     assert_eq!(pending_calls[0].call_id, "call_1");
 
     // 4. 补发 cancelled 的 FunctionResult（run_tool_loop 的 Cancelled 分支逻辑）
-    let ok =
-        crate::runner::emit_cancelled_results(&pending_calls, &tx_out, session.events()).await;
+    let ok = crate::runner::emit_cancelled_results(&pending_calls, &tx_out, session.events()).await;
     assert!(ok, "补发 cancelled 结果应成功");
 
     // 5. session 中 FunctionCall 必须有配对 FunctionResult，且 content 标记取消
@@ -688,18 +696,25 @@ async fn test_cancel_after_function_call_emits_cancelled_result() {
         .iter()
         .filter(|e| matches!(e, Event::FunctionResult { .. }))
         .count();
-    assert_eq!((call_count, result_count), (1, 1), "FunctionCall 与 FunctionResult 应配对");
+    assert_eq!(
+        (call_count, result_count),
+        (1, 1),
+        "FunctionCall 与 FunctionResult 应配对"
+    );
 
     // 6. 验证转换后的消息序列合法：每个 ToolCall 都有配对 ToolResult
     use crate::convert::StreamPipe;
     let messages: Vec<rig_core::completion::Message> = futures::stream::iter(session_events)
-        .pipe(crate::convert::events_to_chat_history)
+        .pipe(|stream| crate::convert::events_to_chat_history(stream, None))
         .collect()
         .await;
     let has_tool_call = messages.iter().any(|m| match m {
-        rig_core::completion::Message::Assistant { content, .. } => content
-            .iter()
-            .any(|c| matches!(c, rig_core::completion::message::AssistantContent::ToolCall(_))),
+        rig_core::completion::Message::Assistant { content, .. } => content.iter().any(|c| {
+            matches!(
+                c,
+                rig_core::completion::message::AssistantContent::ToolCall(_)
+            )
+        }),
         _ => false,
     });
     let has_tool_result = messages.iter().any(|m| match m {
@@ -746,13 +761,18 @@ async fn test_load_chat_messages_filters_orphan_function_calls() {
         .await
         .unwrap();
 
-    let messages = crate::runner::load_chat_messages(&*svc, &sid).await.unwrap();
+    let messages = crate::runner::load_chat_messages(&*svc, &sid, None)
+        .await
+        .unwrap();
 
     // 孤儿 FunctionCall 不应生成 ToolCall（否则 LLM API 拒绝请求）
     let has_tool_call = messages.iter().any(|m| match m {
-        rig_core::completion::Message::Assistant { content, .. } => content
-            .iter()
-            .any(|c| matches!(c, rig_core::completion::message::AssistantContent::ToolCall(_))),
+        rig_core::completion::Message::Assistant { content, .. } => content.iter().any(|c| {
+            matches!(
+                c,
+                rig_core::completion::message::AssistantContent::ToolCall(_)
+            )
+        }),
         _ => false,
     });
     assert!(!has_tool_call, "孤儿 FunctionCall 不应生成 ToolCall");
@@ -804,12 +824,17 @@ async fn test_load_chat_messages_keeps_paired_function_calls() {
         .await
         .unwrap();
 
-    let messages = crate::runner::load_chat_messages(&*svc, &sid).await.unwrap();
+    let messages = crate::runner::load_chat_messages(&*svc, &sid, None)
+        .await
+        .unwrap();
 
     let has_tool_call = messages.iter().any(|m| match m {
-        rig_core::completion::Message::Assistant { content, .. } => content
-            .iter()
-            .any(|c| matches!(c, rig_core::completion::message::AssistantContent::ToolCall(_))),
+        rig_core::completion::Message::Assistant { content, .. } => content.iter().any(|c| {
+            matches!(
+                c,
+                rig_core::completion::message::AssistantContent::ToolCall(_)
+            )
+        }),
         _ => false,
     });
     let has_tool_result = messages.iter().any(|m| match m {
@@ -869,7 +894,10 @@ async fn test_reconcile_orphan_function_calls_repairs_and_idempotent() {
             code,
             ..
         } => {
-            assert_eq!(call_id, "orphan_1", "FunctionResult 应配对孤儿 FunctionCall");
+            assert_eq!(
+                call_id, "orphan_1",
+                "FunctionResult 应配对孤儿 FunctionCall"
+            );
             assert_eq!(name, "test_tool");
             assert!(code.is_none(), "取消结果不应有 exit_code");
             let text: String = content
@@ -966,7 +994,10 @@ async fn test_resume_reconciles_orphan_function_calls() {
         Arc::new(TestResolver),
     );
 
-    let runner = builder.create(Box::new(TestProfile::default())).await.unwrap();
+    let runner = builder
+        .create(Box::new(TestProfile::default()))
+        .await
+        .unwrap();
     let sid = runner.id().to_string();
 
     // 在 session 中埋入孤儿 FunctionCall
@@ -1000,7 +1031,10 @@ async fn test_resume_reconciles_orphan_function_calls() {
         .iter()
         .filter(|e| matches!(e, Event::FunctionResult { .. }))
         .count();
-    assert_eq!(result_count, 1, "resume 应补发孤儿 FunctionCall 的 FunctionResult");
+    assert_eq!(
+        result_count, 1,
+        "resume 应补发孤儿 FunctionCall 的 FunctionResult"
+    );
 
     // 再次 resume 幂等
     let _ = builder.resume(&sid).await.unwrap();
@@ -1011,4 +1045,149 @@ async fn test_resume_reconciles_orphan_function_calls() {
         .filter(|e| matches!(e, Event::FunctionResult { .. }))
         .count();
     assert_eq!(result_count, 1, "resume 补偿应幂等");
+}
+
+// ── 图片上传集成（load_chat_messages） ──
+
+struct StubUploader {
+    uploaded: Arc<tokio::sync::Mutex<Vec<Vec<u8>>>>,
+}
+
+#[async_trait::async_trait]
+impl crate::convert::ImageUploader for StubUploader {
+    async fn upload_image(
+        &self,
+        _name: &str,
+        _media_type: &str,
+        data: Vec<u8>,
+    ) -> anyhow::Result<String> {
+        self.uploaded.lock().await.push(data);
+        Ok("file-api-uploaded".to_string())
+    }
+    async fn read_image_file(&self, uri: &str) -> anyhow::Result<Vec<u8>> {
+        Ok(uri.as_bytes().to_vec())
+    }
+}
+
+#[tokio::test]
+async fn test_load_chat_messages_uploads_image_block() {
+    use playpen_content::Resource;
+    use rig_core::completion::message::UserContent;
+
+    let svc = new_db().await;
+    let session = svc.create().await.unwrap();
+    let sid = session.id().to_string();
+    session
+        .events()
+        .append(&Event::UserMessage {
+            id: String::new(),
+            content: vec![
+                ContentBlock::text("what is this?"),
+                ContentBlock::Resource(Resource::Blob {
+                    uri: "file:///tmp/cat.png".into(),
+                    media_type: "image/png".into(),
+                    blob: vec![1, 2, 3],
+                    annotations: None,
+                }),
+            ],
+        })
+        .await
+        .unwrap();
+
+    // 先确认事件可见
+    let loaded = svc.get(&sid).await.unwrap();
+    let evts: Vec<Event> = loaded.events().all().await.collect().await;
+    assert_eq!(evts.len(), 1, "UserMessage 应已持久化");
+
+    let uploader = Arc::new(StubUploader {
+        uploaded: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+    });
+    let messages = crate::runner::load_chat_messages(&*svc, &sid, Some(uploader.clone()))
+        .await
+        .unwrap();
+
+    match &messages[0] {
+        rig_core::completion::Message::User { content } => {
+            assert_eq!(content.len(), 2);
+            assert!(matches!(content[0], UserContent::Text(_)));
+            assert!(
+                matches!(&content[1], UserContent::Document(doc)
+                    if matches!(&doc.data, rig_core::completion::message::DocumentSourceKind::FileId(id) if id == "file-api-uploaded")),
+                "图片块应上传并替换为 file 引用"
+            );
+        }
+        _ => panic!("期望 User 消息"),
+    }
+    assert_eq!(uploader.uploaded.lock().await.len(), 1);
+}
+
+#[tokio::test]
+async fn test_run_with_model_uploads_image_and_sends_file_block() {
+    use httpmock::Method::POST;
+    use httpmock::MockServer;
+    use playpen_content::Resource;
+
+    // 端到端：UserMessage 图片块 → files 上传 → chat 请求体含 DeepSeek file 块
+    let server = MockServer::start();
+    let files_mock = server.mock(|when, then| {
+        when.method(POST).path("/files");
+        then.status(200).body(
+            r#"{"id":"file-api-e2e","object":"file","bytes":1,"created_at":1,"filename":"cat.png","purpose":"user_data"}"#,
+        );
+    });
+    let sse = concat!(
+        "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hi\"},\"logprobs\":null,\"finish_reason\":null}]}\n\n",
+        "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{},\"logprobs\":null,\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":1,\"total_tokens\":11}}\n\n",
+        "data: [DONE]\n\n"
+    );
+    let chat_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/chat/completions")
+            .body_contains("\"type\":\"file\"")
+            .body_contains("file-api-e2e");
+        then.status(200)
+            .header("content-type", "text/event-stream")
+            .body(sse);
+    });
+
+    let svc = new_db().await;
+    let session = svc.create().await.unwrap();
+    let runner = make_runner(session, svc.clone()).await;
+
+    let llm_config = crate::client::LlmConfig {
+        base_url: server.base_url(),
+        api_key: "sk-test".into(),
+        model: "deepseek/deepseek-v4-flash-vision-exp".into(),
+        model_config: None,
+    };
+    let model = crate::client::LlmClient::new(llm_config)
+        .build_deepseek_model()
+        .unwrap();
+
+    let uploader: Arc<dyn crate::convert::ImageUploader> =
+        Arc::new(crate::files::DeepSeekImageUploader::new(
+            crate::files::DeepSeekFilesClient::new(&server.base_url(), "sk-test"),
+            ".",
+            None,
+        ));
+
+    let prompt = vec![
+        ContentBlock::text("what is this?"),
+        ContentBlock::Resource(Resource::Blob {
+            uri: "file:///tmp/cat.png".into(),
+            media_type: "image/png".into(),
+            blob: vec![1, 2, 3],
+            annotations: None,
+        }),
+    ];
+    let stream = runner
+        .run_with_model(model, prompt, vec![], None, Some(uploader))
+        .await;
+    let events: Vec<Event> = stream.collect().await;
+    assert!(
+        events.iter().any(|e| matches!(e, Event::TurnStop { .. })),
+        "应有 TurnStop"
+    );
+    assert_eq!(files_mock.hits(), 1, "图片应上传一次");
+    assert_eq!(chat_mock.hits(), 1, "chat 请求体应包含 DeepSeek file 块");
 }

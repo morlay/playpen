@@ -196,7 +196,9 @@ async fn exec_timeout_not_reached_fast_exit() {
     .unwrap();
 
     assert!(
-        results.iter().any(|r| matches!(r, CommandOutput::Exited { code: 0 })),
+        results
+            .iter()
+            .any(|r| matches!(r, CommandOutput::Exited { code: 0 })),
         "应收到 Exited(0)，实际: {:?}",
         results,
     );
@@ -291,12 +293,16 @@ async fn exec_no_output_exit_zero() {
 
     // 只有 Exited，没有 Stdout/Stderr
     assert!(
-        results.iter().all(|r| matches!(r, CommandOutput::Exited { .. })),
+        results
+            .iter()
+            .all(|r| matches!(r, CommandOutput::Exited { .. })),
         "无输出命令只应产生 Exited，实际: {:?}",
         results,
     );
     assert!(
-        results.iter().any(|r| matches!(r, CommandOutput::Exited { code: 0 })),
+        results
+            .iter()
+            .any(|r| matches!(r, CommandOutput::Exited { code: 0 })),
         "exit code 应为 0"
     );
 }
@@ -373,4 +379,99 @@ async fn exec_message_order_stdout_before_exit() {
     }
 }
 
+/// 命令派生的后台进程（`cmd &`）持有管道时，主进程退出后仍应快速返回 Exited，
+/// 不能被 drain 卡死（孙进程残留导致 EOF 永不出现）。
+#[tokio::test]
+async fn exec_background_process_does_not_hang() {
+    let term = NativeTerminal;
+    let cmd = Command {
+        command: "sleep 30 &".into(),
+        ..Default::default()
+    };
+    let mut rx = term.exec(cmd).unwrap();
+    let results = tokio::task::spawn_blocking(move || {
+        let mut v = Vec::new();
+        while let Some(item) = rx.blocking_recv() {
+            v.push(item);
+        }
+        v
+    })
+    .await
+    .unwrap();
 
+    assert!(
+        results
+            .iter()
+            .any(|r| matches!(r, CommandOutput::Exited { code: 0 })),
+        "后台进程场景应快速收到 Exited(0)，实际: {:?}",
+        results,
+    );
+}
+
+/// 取消时孙进程（`sh -c "sleep 30"` 中 sh 退出后残留的 sleep）应被整组 kill，
+/// 取消必须快速生效，不能被残留孙进程持有的管道卡死。
+#[tokio::test]
+async fn exec_cancel_kills_process_group() {
+    let term = NativeTerminal;
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+    let cmd = Command {
+        command: "sleep 30".into(),
+        cancel_token: Some(cancel_token.clone()),
+        ..Default::default()
+    };
+    let mut rx = term.exec(cmd).unwrap();
+
+    // 延迟取消，确保命令已启动
+    let ct = cancel_token.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        ct.cancel();
+    });
+
+    let results = tokio::task::spawn_blocking(move || {
+        let mut v = Vec::new();
+        while let Some(item) = rx.blocking_recv() {
+            v.push(item);
+        }
+        v
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        results
+            .iter()
+            .any(|r| matches!(r, CommandOutput::Cancelled)),
+        "应收到 Cancelled，实际: {:?}",
+        results,
+    );
+}
+
+/// stdin 必须隔离：读取 stdin 的命令（cat）应立即得到 EOF 退出，而不是挂起等待输入。
+/// 同时避免与 ACP 宿主通道的 stdin reader 竞争抢读。
+#[tokio::test]
+async fn exec_stdin_isolated_cat_returns_eof() {
+    let term = NativeTerminal;
+    let cmd = Command {
+        command: "cat".into(),
+        ..Default::default()
+    };
+    let mut rx = term.exec(cmd).unwrap();
+    let results = tokio::task::spawn_blocking(move || {
+        let mut v = Vec::new();
+        while let Some(item) = rx.blocking_recv() {
+            v.push(item);
+        }
+        v
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        results
+            .iter()
+            .any(|r| matches!(r, CommandOutput::Exited { code: 0 })),
+        "cat 应收到 stdin EOF 后立即退出，实际: {:?}",
+        results,
+    );
+}

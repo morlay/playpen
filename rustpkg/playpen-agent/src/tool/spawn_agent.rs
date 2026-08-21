@@ -85,7 +85,10 @@ impl Tool for SpawnAgentTool {
             id: ctx.event_id().to_string(),
             call_id: ctx.call_id().to_string(),
             name: ctx.call_name().to_string(),
-            text: format!("子代理「{}」已就绪（session {}），正在运行…", input.label, handle.session_id),
+            text: format!(
+                "子代理「{}」已就绪（session {}），正在运行…",
+                input.label, handle.session_id
+            ),
         });
 
         let result = self.host.send(&handle, &input.message).await;
@@ -109,10 +112,12 @@ impl Tool for SpawnAgentTool {
 
         // 铁律：成败都返回 Ok + annotations（Err 通道无 annotations，会丢失 session_id）。
         // `_meta.*` 前缀由 event_mapper 还原为 ACP ToolCallUpdate meta（复用既有约定）。
-        Ok(vec![ContentBlock::text(text).with_annotations(serde_json::json!({
-            format!("_meta.{SUBAGENT_SESSION_INFO_META_KEY}"): session_info,
-            "exit_code": code,
-        }))])
+        Ok(vec![ContentBlock::text(text).with_annotations(
+            serde_json::json!({
+                format!("_meta.{SUBAGENT_SESSION_INFO_META_KEY}"): session_info,
+                "exit_code": code,
+            }),
+        )])
     }
 }
 

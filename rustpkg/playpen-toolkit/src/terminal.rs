@@ -5,25 +5,17 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CommandOutput {
     #[serde(rename = "stdout")]
-    Stdout {
-        text: String,
-    },
+    Stdout { text: String },
     #[serde(rename = "stderr")]
-    Stderr {
-        text: String,
-    },
+    Stderr { text: String },
     #[serde(rename = "exited")]
-    Exited {
-        code: i32,
-    },
+    Exited { code: i32 },
     #[serde(rename = "cancelled")]
     Cancelled,
     #[serde(rename = "timeout")]
     Timeout,
     #[serde(rename = "spawn_failed")]
-    SpawnFailed {
-        message: String,
-    },
+    SpawnFailed { message: String },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]

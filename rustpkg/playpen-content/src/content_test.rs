@@ -100,3 +100,44 @@ fn test_blob_serde_roundtrip() {
         _ => panic!("应反序列化为 Blob"),
     }
 }
+
+#[test]
+fn test_content_block_resource_serde_roundtrip() {
+    // 嵌套 enum 的 tag 冲突回归测试：ContentBlock::Resource 序列化后
+    // 必须能被反序列化回来（DB 持久化依赖此 roundtrip）。
+    let block = ContentBlock::Resource(Resource::Blob {
+        uri: "file:///tmp/a.png".into(),
+        media_type: "image/png".into(),
+        blob: vec![0x89, 0x50, 0x4e, 0x47],
+        annotations: None,
+    });
+    let json = serde_json::to_value(&block).unwrap();
+    // 外层 type=resource，内层 resource_type=blob，不得出现重复的 type 键
+    assert_eq!(json["type"], "resource");
+    assert_eq!(json["resource_type"], "blob");
+    assert!(json.get("type2").is_none(), "不应出现重复 type 键");
+
+    let decoded: ContentBlock = serde_json::from_value(json).unwrap();
+    match decoded {
+        ContentBlock::Resource(Resource::Blob { blob, .. }) => {
+            assert_eq!(blob, vec![0x89, 0x50, 0x4e, 0x47]);
+        }
+        _ => panic!("应反序列化为 Resource::Blob"),
+    }
+}
+
+#[test]
+fn test_content_block_resource_text_roundtrip() {
+    let block = ContentBlock::Resource(Resource::text("file:///tmp/a.txt", "text/plain", "hello"));
+    let json = serde_json::to_value(&block).unwrap();
+    assert_eq!(json["type"], "resource");
+    assert_eq!(json["resource_type"], "text");
+
+    let decoded: ContentBlock = serde_json::from_value(json).unwrap();
+    match decoded {
+        ContentBlock::Resource(Resource::Text { text, .. }) => {
+            assert_eq!(text, "hello");
+        }
+        _ => panic!("应反序列化为 Resource::Text"),
+    }
+}

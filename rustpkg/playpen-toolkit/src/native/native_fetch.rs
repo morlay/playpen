@@ -97,7 +97,7 @@ fn process_children(parent: &ElementRef, md: &mut String, ctx: &ConvertCtx) {
         match child.value() {
             Node::Text(text) => {
                 if ctx.in_pre {
-                    md.push_str(&text);
+                    md.push_str(text);
                 } else {
                     let text = text.trim();
                     if !text.is_empty() {
@@ -264,8 +264,8 @@ fn process_element(el: &ElementRef, md: &mut String, ctx: &ConvertCtx) {
         }
 
         // === 容器：只需递归子节点 ===
-        "div" | "section" | "article" | "main" | "header" | "footer" | "nav" | "aside"
-        | "span" | "html" | "head" | "body" => {
+        "div" | "section" | "article" | "main" | "header" | "footer" | "nav" | "aside" | "span"
+        | "html" | "head" | "body" => {
             process_children(el, md, ctx);
         }
 
@@ -326,8 +326,6 @@ fn fence_code_block(content: &str) -> String {
     if content.contains("```") {
         // 内容包含三个反引号，用四个反引号作为围栏
         format!("````\n{content}\n````\n")
-    } else if content.contains("``") {
-        format!("```\n{content}\n```\n")
     } else {
         format!("```\n{content}\n```\n")
     }

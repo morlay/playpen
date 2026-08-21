@@ -129,3 +129,133 @@ fn test_llm_config_glm_and_mimo() {
     };
     assert!(!config_normal.is_deepseek_compat(), "其他模型不匹配");
 }
+
+// ── file 块改写（DeepSeek Files API 格式） ──
+
+#[test]
+fn test_rewrite_file_blocks_to_deepseek_format() {
+    let mut body = serde_json::json!({
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "what is this?"},
+                {"type": "file", "file": {"file_id": "file-api-abc123"}}
+            ]
+        }]
+    });
+    crate::client::rewrite_file_blocks(&mut body);
+
+    let content = &body["messages"][0]["content"];
+    assert_eq!(content[1]["type"], "file");
+    assert_eq!(content[1]["file_id"], "file-api-abc123");
+    assert!(
+        content[1].get("file").is_none(),
+        "OpenAI 嵌套 file 对象应被移除"
+    );
+    // 文本块不受影响
+    assert_eq!(content[0]["text"], "what is this?");
+}
+
+#[test]
+fn test_rewrite_file_blocks_keeps_file_data() {
+    let mut body = serde_json::json!({
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "file", "file": {"file_data": "data:image/png;base64,AAAA", "filename": "a.png"}}
+            ]
+        }]
+    });
+    crate::client::rewrite_file_blocks(&mut body);
+
+    let part = &body["messages"][0]["content"][0];
+    assert_eq!(part["file_data"], "data:image/png;base64,AAAA");
+    assert_eq!(part["filename"], "a.png");
+}
+
+#[test]
+fn test_finalize_flattens_text_only_content() {
+    let mut body = serde_json::json!({
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "hello"},
+                {"type": "text", "text": "world"}
+            ]
+        }]
+    });
+    crate::client::deepseek_finalize_request_body(&mut body).unwrap();
+    assert_eq!(body["messages"][0]["content"], "hello\nworld");
+}
+
+#[test]
+fn test_finalize_keeps_mixed_content_array() {
+    let mut body = serde_json::json!({
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "what is this?"},
+                {"type": "file", "file": {"file_id": "file-api-x"}}
+            ]
+        }]
+    });
+    crate::client::deepseek_finalize_request_body(&mut body).unwrap();
+    // 含 file 块的数组保留为数组（不扁平化）
+    let content = &body["messages"][0]["content"];
+    assert!(content.is_array(), "混合内容数组应保留");
+    assert_eq!(content.as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn test_finalize_tool_calls_add_index() {
+    let mut body = serde_json::json!({
+        "messages": [{
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "read", "arguments": "{}"}}]
+        }]
+    });
+    crate::client::deepseek_finalize_request_body(&mut body).unwrap();
+    assert_eq!(body["messages"][0]["tool_calls"][0]["index"], 0);
+}
+
+#[test]
+fn test_supports_image_by_config() {
+    let config = LlmConfig {
+        base_url: "https://api.deepseek.com".into(),
+        api_key: "sk-test".into(),
+        model: "deepseek/deepseek-v4-flash".into(),
+        model_config: Some(Model {
+            name: "deepseek-v4-flash".into(),
+            display_name: None,
+            reasoning_efforts: vec![],
+            input_types: vec![playpen_config::model::InputType::Image],
+            context_window: 128000,
+            max_tokens: 16384,
+            cost: Default::default(),
+        }),
+    };
+    assert!(config.supports_image(), "配置声明 Image 时应支持");
+}
+
+#[test]
+fn test_supports_image_falls_back_to_name() {
+    let config = LlmConfig {
+        base_url: "https://api.deepseek.com".into(),
+        api_key: "sk-test".into(),
+        model: "deepseek/deepseek-v4-flash-vision-exp".into(),
+        model_config: None,
+    };
+    assert!(config.supports_image(), "无配置时按模型名兜底");
+}
+
+#[test]
+fn test_supports_image_false_for_text_model() {
+    let config = LlmConfig {
+        base_url: "https://api.deepseek.com".into(),
+        api_key: "sk-test".into(),
+        model: "deepseek/deepseek-v4-flash".into(),
+        model_config: None,
+    };
+    assert!(!config.supports_image(), "文本模型不支持图片");
+}

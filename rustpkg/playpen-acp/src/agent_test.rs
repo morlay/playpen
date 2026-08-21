@@ -15,8 +15,8 @@ mod tests {
     use playpen_agent::runner::{AgentRunner, AgentRunnerBuilder, SimpleRunner};
     use playpen_agent::testing::TestProfile;
     use playpen_config::Settings;
-    use rig_core::test_utils::{MockCompletionModel, MockStreamEvent};
     use playpen_session::SessionService;
+    use rig_core::test_utils::{MockCompletionModel, MockStreamEvent};
     use tokio::sync::mpsc;
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
@@ -149,7 +149,7 @@ mod tests {
             Box<dyn futures::Stream<Item = playpen_content::Event> + std::marker::Send>,
         > {
             self.inner
-                .run_with_model(self.llm.mock.clone(), prompt, vec![], None, |_| None)
+                .run_with_model(self.llm.mock.clone(), prompt, vec![], None, None)
                 .await
         }
         async fn rewind(&self) -> anyhow::Result<()> {

@@ -82,6 +82,7 @@ Agent 运行时的核心编排。协调配置、事件、持久化、工具四�
 | `AgentRunnerBuilder` | 工厂：create(profile) → 新 session 的 runner / resume(session_id) → 恢复已有 session |
 | tool loop | 多轮 tool use：LLM 返回 tool_call → 执行工具 → 结果送回 LLM，直至 TurnStop |
 | LLM client | 通过 rig-core 调用 OpenAI 兼容 API，处理 streaming / thinking / tool_call |
+| image upload | 图片类内容先经 provider files API 上传，以 file_id 引用发送（deepseek + vision 模型） |
 | cancel | 通过 CancellationToken 中断正在执行的 prompt |
 
 ### 交互（Interaction）

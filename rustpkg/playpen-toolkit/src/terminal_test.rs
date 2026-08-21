@@ -32,7 +32,9 @@ fn spawn_failed_serde() {
     assert!(json.contains("sh not found"));
 
     let deserialized: CommandOutput = serde_json::from_str(&json).unwrap();
-    assert!(matches!(deserialized, CommandOutput::SpawnFailed { message } if message == "sh not found"));
+    assert!(
+        matches!(deserialized, CommandOutput::SpawnFailed { message } if message == "sh not found")
+    );
 }
 
 #[test]

@@ -8,13 +8,12 @@ use playpen_config::Settings;
 use playpen_content::{ContentBlock, Event, StopReason};
 use playpen_profile::{AgentProfile, AgentProfileLoader};
 use playpen_session::{Session, SessionService};
-use rig_core::OneOrMany;
 use rig_core::completion::{CompletionModel, CompletionRequest, Message, ToolDefinition};
 use serde_json;
 use tokio::sync::mpsc;
 
 use crate::client::LlmClient;
-use crate::convert::{StreamPipe, events_to_chat_history};
+use crate::convert::{ImageUploader, StreamPipe, events_to_chat_history};
 use crate::subagent::SubagentHost;
 use crate::tool::Tool;
 
@@ -336,35 +335,35 @@ impl AgentRunner for SimpleRunner {
 
         let client = LlmClient::new(llm_config);
 
+        // 图片上传器：仅 DeepSeek provider + 支持图片输入的模型启用。
+        // 图片类 ContentBlock 先通过 files API 上传，再以 file_id 引用发送。
+        let uploader: Option<std::sync::Arc<dyn ImageUploader>> =
+            if client.config().is_deepseek_provider() && client.config().supports_image() {
+                Some(std::sync::Arc::new(
+                    crate::files::DeepSeekImageUploader::new(
+                        crate::files::DeepSeekFilesClient::new(
+                            &client.config().base_url,
+                            &client.config().api_key,
+                        ),
+                        self.profile.working_dir().clone(),
+                        Some(self.session.clone()),
+                    ),
+                ))
+            } else {
+                None
+            };
+
         let additional_params =
             client.build_additional_params(self.profile.model_profile(), model_max_tokens);
 
         match client.build_model() {
-            Ok(crate::client::ModelEnum::Deepseek {
-                model,
-                extract_finish_reason,
-            }) => {
-                self.run_with_model(
-                    model,
-                    prompt,
-                    tools,
-                    additional_params,
-                    extract_finish_reason,
-                )
-                .await
+            Ok(crate::client::ModelEnum::Deepseek { model }) => {
+                self.run_with_model(model, prompt, tools, additional_params, uploader)
+                    .await
             }
-            Ok(crate::client::ModelEnum::Openai {
-                model,
-                extract_finish_reason,
-            }) => {
-                self.run_with_model(
-                    model,
-                    prompt,
-                    tools,
-                    additional_params,
-                    extract_finish_reason,
-                )
-                .await
+            Ok(crate::client::ModelEnum::Openai { model }) => {
+                self.run_with_model(model, prompt, tools, additional_params, uploader)
+                    .await
             }
             Err(e) => stop_stream(StopReason::Error(e.to_string())),
         }
@@ -421,7 +420,7 @@ impl SimpleRunner {
         prompt: Vec<ContentBlock>,
         tools: Vec<std::sync::Arc<dyn Tool>>,
         additional_params: Option<serde_json::Value>,
-        extract_finish_reason: fn(&dyn std::any::Any) -> Option<String>,
+        image_uploader: Option<std::sync::Arc<dyn ImageUploader>>,
     ) -> Pin<Box<dyn Stream<Item = Event> + Send>> {
         let (tx, rx) = mpsc::unbounded_channel();
         let instruction = self.instruction().await;
@@ -460,7 +459,7 @@ impl SimpleRunner {
             temperature,
             additional_params,
             max_turns,
-            extract_finish_reason,
+            image_uploader,
         }));
 
         Box::pin(ReceiverStream { rx })
@@ -593,7 +592,7 @@ struct ToolLoopParams<M: CompletionModel + 'static> {
     temperature: Option<f64>,
     additional_params: Option<serde_json::Value>,
     max_turns: usize,
-    extract_finish_reason: fn(&dyn std::any::Any) -> Option<String>,
+    image_uploader: Option<Arc<dyn ImageUploader>>,
 }
 
 /// 工具循环：从 session 读取事件 → 请求 LLM → 消费 stream → 执行 tool call → 重复。
@@ -614,7 +613,13 @@ async fn run_tool_loop<M: CompletionModel + 'static>(params: ToolLoopParams<M>) 
         }
 
         // 从 session 按事件 asc 拼装 Message
-        let messages = match load_chat_messages(&*params.svc, &params.sid).await {
+        let messages = match load_chat_messages(
+            &*params.svc,
+            &params.sid,
+            params.image_uploader.clone(),
+        )
+        .await
+        {
             Ok(m) => m,
             Err(e) => {
                 send_stop(&params.tx, StopReason::Error(e));
@@ -625,7 +630,7 @@ async fn run_tool_loop<M: CompletionModel + 'static>(params: ToolLoopParams<M>) 
         let request = CompletionRequest {
             model: None,
             preamble: params.preamble.clone(),
-            chat_history: OneOrMany::many(messages).expect("messages non-empty"),
+            chat_history: messages,
             documents: vec![],
             tools: params.tool_defs.clone(),
             temperature: params.temperature,
@@ -639,38 +644,35 @@ async fn run_tool_loop<M: CompletionModel + 'static>(params: ToolLoopParams<M>) 
         match params.model.stream(request).await {
             Ok(stream) => {
                 // stream in, stream out — 惰性迭代
-                let event_stream = Box::pin(crate::convert::process_stream(
-                    stream,
-                    params.extract_finish_reason,
-                ));
+                let event_stream = Box::pin(crate::convert::process_stream(stream));
 
-                let (pending_calls, turn_bits) =
-                    match consume_turn_stream(
-                        event_stream,
-                        &params.tx,
-                        session.events(),
-                        &params.cancel,
-                    )
-                    .await
-                    {
-                        ConsumeOutcome::Done { pending_calls, turn_bits } => {
-                            (pending_calls, turn_bits)
-                        }
-                        ConsumeOutcome::Cancelled { pending_calls } => {
-                            // 已持久化的 FunctionCall 必须补发 FunctionResult，
-                            // 否则 session 历史残留孤儿 tool_call（无配对结果），
-                            // 下一次构建请求会被 LLM API 拒绝。
-                            if !emit_cancelled_results(&pending_calls, &params.tx, session.events())
-                                .await
-                            {
-                                // emit_cancelled_results 已发 TurnStop::Error
-                                return;
-                            }
-                            send_stop(&params.tx, StopReason::Cancelled);
+                let (pending_calls, turn_bits) = match consume_turn_stream(
+                    event_stream,
+                    &params.tx,
+                    session.events(),
+                    &params.cancel,
+                )
+                .await
+                {
+                    ConsumeOutcome::Done {
+                        pending_calls,
+                        turn_bits,
+                    } => (pending_calls, turn_bits),
+                    ConsumeOutcome::Cancelled { pending_calls } => {
+                        // 已持久化的 FunctionCall 必须补发 FunctionResult，
+                        // 否则 session 历史残留孤儿 tool_call（无配对结果），
+                        // 下一次构建请求会被 LLM API 拒绝。
+                        if !emit_cancelled_results(&pending_calls, &params.tx, session.events())
+                            .await
+                        {
+                            // emit_cancelled_results 已发 TurnStop::Error
                             return;
                         }
-                        ConsumeOutcome::PersistFailed => return,
-                    };
+                        send_stop(&params.tx, StopReason::Cancelled);
+                        return;
+                    }
+                    ConsumeOutcome::PersistFailed => return,
+                };
 
                 // 位判断：只有 thought 时重试（LLM 抽风防护）
                 if turn_bits & (MODEL_ACTION_MESSAGE | MODEL_ACTION_CALL) == 0 {
@@ -735,7 +737,10 @@ struct PendingCall {
 #[derive(Debug)]
 enum ConsumeOutcome {
     /// 正常消费完，附带待执行调用与本轮产出的事件类型位标志。
-    Done { pending_calls: Vec<PendingCall>, turn_bits: u8 },
+    Done {
+        pending_calls: Vec<PendingCall>,
+        turn_bits: u8,
+    },
     /// 用户取消：流已 drop。携带已持久化的待执行调用，
     /// 调用方必须为它们补发 FunctionResult，否则 session 历史残留孤儿
     /// tool_call，下一次请求会被 LLM API 拒绝（整个 session 作废）。
@@ -777,6 +782,7 @@ async fn emit(
 async fn load_chat_messages(
     svc: &dyn SessionService,
     sid: &str,
+    image_uploader: Option<Arc<dyn ImageUploader>>,
 ) -> Result<Vec<Message>, String> {
     let s = svc.get(sid).await.map_err(|e| e.to_string())?;
     let events: Vec<Event> = s
@@ -806,7 +812,7 @@ async fn load_chat_messages(
         Event::FunctionCall { call_id, .. } => resulted_call_ids.contains(call_id),
         _ => true,
     }))
-    .pipe(events_to_chat_history)
+    .pipe(|stream| events_to_chat_history(stream, image_uploader))
     .collect()
     .await;
 
@@ -885,11 +891,19 @@ async fn consume_turn_stream(
             ..
         } = event
         {
-            pending_calls.push(PendingCall { id, call_id, name, args });
+            pending_calls.push(PendingCall {
+                id,
+                call_id,
+                name,
+                args,
+            });
         }
     }
 
-    ConsumeOutcome::Done { pending_calls, turn_bits }
+    ConsumeOutcome::Done {
+        pending_calls,
+        turn_bits,
+    }
 }
 
 /// 构造并持久化 FunctionResult。返回 false 表示持久化失败（已发 `TurnStop::Error`）。
@@ -932,7 +946,10 @@ pub(crate) async fn reconcile_orphan_function_calls(
 
     let mut repaired = 0usize;
     for e in &events {
-        let Event::FunctionCall { id, call_id, name, .. } = e else {
+        let Event::FunctionCall {
+            id, call_id, name, ..
+        } = e
+        else {
             continue;
         };
         if resulted_call_ids.contains(call_id.as_str()) {

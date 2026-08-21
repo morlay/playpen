@@ -17,8 +17,12 @@ _避免使用_：runner 仓库、构建器
 _避免使用_：默认 runner、简单 runner
 
 **LLM 客户端（LlmClient / LlmConfig / ModelEnum）**：
-rig-core 之上的 LLM 客户端。`LlmConfig::from_settings(settings, profile)` 解析出 base_url / api_key / model / model_config；`is_deepseek_compat()` 按模型名前缀（deepseek / glm / mimo）判断协议；`ModelEnum` 枚举 `Deepseek` / `Openai` 两种兼容协议，各携带 finish_reason 提取器；`LlmClient::build_model()` 统一返回 `ModelEnum`。
+rig-core 之上的 LLM 客户端。`LlmConfig::from_settings(settings, profile)` 解析出 base_url / api_key / model / model_config；`is_deepseek_compat()` 按模型名前缀（deepseek / glm / mimo）判断协议；`is_deepseek_provider()` / `is_vision_model()` 分别判断 provider 与 vision 模型；`ModelEnum` 枚举 `Deepseek` / `Openai` 两种兼容协议；`LlmClient::build_model()` 统一返回 `ModelEnum`。DeepSeek 路径使用自定义 provider `PlaypenDeepSeekExt`（rig 内置行为 + file 块格式改写）。
 _避免使用_：模型客户端、模型配置
+
+**图片上传（ImageUploader / DeepSeekImageUploader / DeepSeekFilesClient）**：
+图片类内容先通过 DeepSeek Files API（`POST {base_url}/files`，`purpose=user_data`）上传获得 `file_id`，发送给 LLM 时以 `{"type":"file","file_id":...}` 块引用。`ImageUploader` 为转换层接缝（`upload_image` / `read_image_file`）；`DeepSeekImageUploader` 为生产实现，按内容 sha256 去重（进程内缓存 + session `StateUpdate` 持久化）。仅 deepseek provider + vision 模型由 runner 注入；未注入或上传失败时图片块回退文本化。见 [docs/adr/0001-files-api-image-upload.md](../../docs/adr/0001-files-api-image-upload.md)。
+_避免使用_：文件上传器、图片客户端
 
 **子代理（SubagentHost / SubagentHandle / SubagentOutput / RunnerSubagentHost）**：
 子代理能力。`SubagentHost::spawn(label, session_id)` 合并 create/resume（`None` 新建、`Some` 恢复），`send(handle, prompt)` 等待子代理完成并取回最终文本。`SubagentHandle` 持有 `session_id` 与 `message_start_index`；`SubagentOutput` 持有 `text` 与 `message_end_index`。索引采用「可见条目」计数，仅计 UserMessage / ModelMessage / ModelThought / FunctionCall 四类事件。`RunnerSubagentHost` 为生产实现，持 `AgentRunnerBuilder` + 父 profile + 父取消令牌（父 cancel 级联取消子代理）。详见 [docs/spawn-agent.md](../../docs/spawn-agent.md)。
@@ -33,5 +37,5 @@ _避免使用_：工具接口、工具上下文
 _避免使用_：工具调用循环、agent loop
 
 **事件转换（convert）**：
-Event ↔ rig Message 转换。`events_to_chat_history` 将 session Event 流转换为 rig Message 序列；`process_stream` 将 rig 流式 chunk 转换为 Event 流（`ModelMessageDelta` / `ModelThoughtDelta` 增量、`ModelThought` / `ModelMessage` 完整记录、`FunctionCall`、`TurnStop`）；`finish_reason_to_stop_reason` 将 finish_reason 映射为 `StopReason`。
+Event ↔ rig Message 转换。`events_to_chat_history` 将 session Event 流转换为 rig Message 序列（可选注入 `ImageUploader`，图片块先上传再以 file 引用发送）；`process_stream` 将 rig 流式 chunk 转换为 Event 流（`ModelMessageDelta` / `ModelThoughtDelta` 增量、`ModelThought` / `ModelMessage` 完整记录、`FunctionCall`、`TurnStop`）；`finish_reason_to_stop_reason` 将 rig 标准化 finish_reason 映射为 `StopReason`。
 _避免使用_：转换层、映射层

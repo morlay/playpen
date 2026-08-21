@@ -9,7 +9,9 @@ use playpen_config::model::Model;
 use playpen_content::ContentBlock;
 use playpen_content::Event;
 
-use crate::acp_content::{extract_acp_annotations, map_turn_stop, text_from_opt_content, to_acp_blocks};
+use crate::acp_content::{
+    extract_acp_annotations, map_turn_stop, text_from_opt_content, to_acp_blocks,
+};
 use crate::display::{build_tool_title, extract_cwd, map_tool_kind, meta_with_tool_name};
 
 /// 聚合事件映射所需的上下文，避免函数入参扩散。
