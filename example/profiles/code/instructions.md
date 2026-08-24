@@ -11,7 +11,7 @@
 - 平台内置工具（grep / find / read / write / edit / move / webfetch）是基础，优先使用；覆盖不到或低效的场景用 CLI 补足。
 - 搜索文件内容用 `rg ...`
 - 路径搜索/目录浏览用 `fd ...` 或 `eza --git-ignore ...`
-- 代码重构优先使用 `sg ...`
+- 代码重构优先使用 `ast-grep ...`
 - 默认使用遵循 `.gitignore` 的参数，仅在需要时显式忽略 ignore 规则。
 - 网络请求用平台 `webfetch` 工具（sandbox 已禁 curl / wget）。
 - bash 受 sandbox 命令白名单约束，被拒绝时按返回的可用命令清单调整。
