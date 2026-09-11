@@ -55,6 +55,7 @@ impl Cost {
 #[serde(rename_all = "lowercase")]
 pub enum ThinkingLevel {
     Off,
+    Low,
     High,
     Max,
 }

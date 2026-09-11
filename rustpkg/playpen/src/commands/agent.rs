@@ -103,6 +103,7 @@ fn load_profile(
             if let Some(tl) = thinking_level {
                 mp.thinking_level = Some(match tl {
                     "off" => playpen_config::model::ThinkingLevel::Off,
+                    "low" => playpen_config::model::ThinkingLevel::Low,
                     "high" => playpen_config::model::ThinkingLevel::High,
                     "max" => playpen_config::model::ThinkingLevel::Max,
                     _ => playpen_config::model::ThinkingLevel::Off,
